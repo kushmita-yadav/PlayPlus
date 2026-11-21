@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="220" viewBox="0 0 300 220" fill="none">
+  <ellipse cx="153" cy="190" rx="72" ry="12" fill="#34453B" fill-opacity=".1"/>
+  <circle cx="210" cy="66" r="31" fill="#E7EFDD"/>
+  <path d="M103 61c0-9 22-16 49-16s49 7 49 16v100c0 10-22 18-49 18s-49-8-49-18V61Z" fill="#F8FBF5" stroke="#286246" stroke-width="4"/>
+  <ellipse cx="152" cy="61" rx="49" ry="16" fill="#DCE9D6" stroke="#286246" stroke-width="4"/>
+  <path d="M105 82c24 10 71 10 94 0v38c-26 10-70 10-94 0V82Z" fill="#2C7650"/>
+  <path d="M121 98h62" stroke="#F5F7E8" stroke-linecap="round" stroke-width="3"/>
+  <text x="152" y="112" fill="#F5F7E8" font-family="Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="2" text-anchor="middle">COURT</text>
+  <path d="M105 132c27 11 67 11 94 0" stroke="#D8E6D2" stroke-width="3"/>
+  <circle cx="214" cy="67" r="17" fill="#E8CA4F"/>
+  <path d="M202 63c7 2 13 8 16 15m-9-24c-2 7-1 14 3 22" stroke="#FFF8D7" stroke-linecap="round" stroke-width="2"/>
+  <path d="M76 190h149" stroke="#A8C6A7" stroke-linecap="round" stroke-opacity=".6"/>
+</svg>

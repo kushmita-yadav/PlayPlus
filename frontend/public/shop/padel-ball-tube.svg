@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="220" viewBox="0 0 300 220" fill="none">
+  <ellipse cx="151" cy="190" rx="70" ry="11" fill="#34453B" fill-opacity=".1"/>
+  <circle cx="91" cy="77" r="25" fill="#E8CA4F"/>
+  <circle cx="210" cy="75" r="24" fill="#E8CA4F"/>
+  <path d="M79 70c9 2 16 9 19 18m-10-37c-2 9-1 18 4 27M199 68c9 2 16 9 19 18m-10-37c-2 9-1 18 4 27" stroke="#FFF8D7" stroke-linecap="round" stroke-width="2"/>
+  <path d="M112 55h79v113c0 9-8 16-17 16h-45c-9 0-17-7-17-16V55Z" fill="#EAF3E6" fill-opacity=".84" stroke="#235D43" stroke-width="4"/>
+  <path d="M112 85h79v48h-79z" fill="#2D7653"/>
+  <path d="M112 55h79v16h-79z" fill="#C5DCC0" stroke="#235D43" stroke-width="4"/>
+  <path d="M124 99h55" stroke="#F8F8EA" stroke-linecap="round" stroke-width="3"/>
+  <text x="151" y="119" fill="#F8F8EA" font-family="Arial,sans-serif" font-size="11" font-weight="700" letter-spacing="1.7" text-anchor="middle">PADEL</text>
+  <path d="M124 150h55" stroke="#9BBE96" stroke-linecap="round" stroke-width="3"/>
+  <path d="M79 190h143" stroke="#A8C6A7" stroke-linecap="round" stroke-opacity=".6"/>
+</svg>

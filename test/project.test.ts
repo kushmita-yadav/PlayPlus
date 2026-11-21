@@ -33,6 +33,16 @@ test("sample frontend assets are served", async () => {
   const illustration = await request(app).get("/court-illustration.svg").expect(200);
   assert.match(illustration.headers["content-type"], /image\/svg\+xml/);
   assert.match(illustration.body.toString("utf8"), /viewBox="0 0 460 270"/);
+  const heroArtwork = await request(app).get("/club-hero.svg").expect(200);
+  assert.match(heroArtwork.headers["content-type"], /image\/svg\+xml/);
+  assert.match(heroArtwork.body.toString("utf8"), /viewBox="0 0 560 440"/);
+  for (const artwork of [
+    "tennis-racket.svg", "court-shoes.svg", "tennis-ball-can.svg",
+    "padel-ball-tube.svg", "overgrip-pack.svg", "water-bottle.svg", "sports-kit.svg",
+  ]) {
+    const productImage = await request(app).get(`/shop/${artwork}`).expect(200);
+    assert.match(productImage.headers["content-type"], /image\/svg\+xml/);
+  }
 });
 
 test("login page serves the React application root", async () => {

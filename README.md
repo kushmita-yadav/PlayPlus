@@ -383,6 +383,7 @@ Portal URLs:
 The React interface currently provides:
 
 - Distinct administrator and manager workspaces, a member portal, and a visitor catalog
+- Responsive public club landing page with original local sports artwork and reduced-motion-aware animation
 - Live role-specific dashboards with booking/revenue charts and operational attention queues
 - Administrator-only account provisioning, finance changes, pricing configuration, and payroll
 - Shared dashboard, records for club operations, staff leave review, and basic record creation

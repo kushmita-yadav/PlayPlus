@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Activity, ArrowLeft, ArrowRight, Bell, CalendarDays, Check, CircleDollarSign,
-  ClipboardList, Coffee, Dumbbell, LayoutDashboard, LogOut, Menu, Package, Search, Settings,
+  ClipboardList, Coffee, LayoutDashboard, LogOut, Menu, Package, Search, Settings,
   ShieldCheck, ShoppingBag, Sparkles, Users, X,
 } from "lucide-react";
 import {
@@ -865,11 +865,41 @@ function PublicPortal({ memberMode, member, data, status, selectedView, setSelec
 }
 
 function PublicHome({ memberMode, member, data, setView }: { memberMode: boolean; member: PublicState["member"]; data: PublicState | null; setView: (view: string) => void }) {
-  return <><section className="public-hero"><div><span className="eyebrow">WELCOME TO CHAMPIONS CLUB</span><h1>{memberMode ? `Welcome back${member?.name ? `, ${member.name.split(" ")[0]}` : ""}.` : <>Find your court.<br />Own your game.</>}</h1><p>Tennis, padel, badminton and cricket. Explore the club, compare plans and book a court.</p><div className="hero-actions"><button className="primary-button" onClick={() => setView("courts")}>Explore court availability <ArrowRight size={16} /></button>{!memberMode && <button className="secondary-button" onClick={() => setView("plans")}>Membership plans</button>}</div></div><div className="hero-stat"><Dumbbell size={27} /><strong>{data?.courts.length ?? "—"}</strong><span>club facilities</span><div className="live-dot"><i /> Real-time availability</div></div></section>
-    {memberMode && <MemberSummary member={member} data={data} setView={setView} />}
-    <section className="public-section"><div className="section-title"><div><span className="eyebrow">THE CLUB</span><h2>Everything under one roof</h2></div><button className="text-button" onClick={() => setView("club")}>Discover the club <ArrowRight size={14} /></button></div>
-      <div className="feature-grid">{[["Courts", "Live availability for all club sports."], ["Membership", "Flexible plans and clear member benefits."], ["Sports shop", "Equipment and essentials for your next match."], ["Cafeteria", "Food and drinks for before and after play."]].map(([title, detail]) => <article className="feature-card" key={title}><span className="feature-icon"><Dumbbell size={18} /></span><h3>{title}</h3><p>{detail}</p></article>)}</div>
+  const availableCourts = data?.courts.filter((court) => court.status === "Available").length;
+  const features = [
+    { title: "Courts", detail: "Tennis, padel, badminton and cricket, with live availability.", view: "courts", icon: CalendarDays, theme: "court" },
+    { title: "Membership", detail: "Simple plans and benefits designed around how you play.", view: "plans", icon: Users, theme: "membership" },
+    { title: "Sports shop", detail: "Equipment and everyday essentials for your next match.", view: "shop", icon: ShoppingBag, theme: "shop" },
+    { title: "Cafeteria", detail: "A relaxed place to recharge before and after the game.", view: "club", icon: Coffee, theme: "cafe" },
+  ];
+  return <><section className="public-hero">
+      <div className="public-hero-copy">
+        <span className="eyebrow">WELCOME TO CHAMPIONS CLUB</span>
+        <h1>{memberMode
+          ? <>Welcome back{member?.name ? `, ${member.name.split(" ")[0]}` : ""}.<br /><span className="hero-highlight">Ready to play?</span></>
+          : <>Find your court.<br /><span className="hero-highlight">Own your game.</span></>}</h1>
+        <p>A home for tennis, padel, badminton and cricket. Find your next match, explore membership and make more time to play.</p>
+        <div className="hero-actions">
+          <button className="primary-button" onClick={() => setView("courts")}>Explore court availability <ArrowRight size={16} /></button>
+          <button className="secondary-button" onClick={() => setView("plans")}>{memberMode ? "View membership" : "Explore membership"}</button>
+        </div>
+        <div className="hero-assurance"><span><i /> Live availability</span><span>One club. Every way to play.</span></div>
+      </div>
+      <div className="public-hero-art">
+        <div className="hero-art-glow" />
+        <img src="/club-hero.svg" alt="" aria-hidden="true" />
+        <div className="hero-stat hero-live-card"><span className="hero-live-label"><i /> COURTS READY</span><strong>{availableCourts ?? "—"}</strong><span>available to book</span></div>
+        <div className="hero-membership-card"><span className="membership-spark"><Sparkles size={15} /></span><span><strong>{data?.plans.length ?? "—"} ways to belong</strong><small>Membership options</small></span><ArrowRight size={15} /></div>
+      </div>
     </section>
+    {memberMode && <MemberSummary member={member} data={data} setView={setView} />}
+    <section className="public-section"><div className="section-title"><div><span className="eyebrow">THE CLUB</span><h2>Everything under one roof</h2><p>Train, play, refuel and find your people.</p></div><button className="text-button" onClick={() => setView("club")}>Discover the club <ArrowRight size={14} /></button></div>
+      <div className="feature-grid">{features.map(({ title, detail, view, icon: Icon, theme }) => <article className="feature-card" key={title}>
+        <div className={`feature-illustration ${theme}`} aria-hidden="true"><Icon size={28} strokeWidth={1.6} /><span /></div>
+        <h3>{title}</h3><p>{detail}</p><button className="feature-link" onClick={() => setView(view)}>Explore <ArrowRight size={14} /></button>
+      </article>)}</div>
+    </section>
+    <section className="public-cta"><div><span className="eyebrow">YOUR NEXT MATCH STARTS HERE</span><h2>Make time to play.</h2><p>Choose a court and find a time that works for you.</p></div><button className="primary-button" onClick={() => setView("courts")}>Find a court <ArrowRight size={16} /></button></section>
   </>;
 }
 
@@ -903,9 +933,20 @@ function PublicCourts({ data, onBook, busy, notify }: { data: PublicState | null
 
 function PublicShop({ data }: { data: PublicState | null }) {
   return <main className="public-section"><div className="section-title"><div><span className="eyebrow">PLAY & PERFORM</span><h2>Club shop</h2><p>Browse the current club catalog.</p></div></div>
-    <div className="product-grid">{(data?.products ?? []).map((product) => <article className="public-product" key={product.id}><div className="product-art">{product.icon ?? <Package size={28} />}</div><span className="eyebrow">{product.category}</span><h3>{product.name}</h3><strong>{money(product.price)}</strong></article>)}</div>
+    <div className="product-grid">{(data?.products ?? []).map((product) => <article className="public-product" key={product.id}><div className={`product-art product-art-${product.category.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}><img src={productArtwork(product)} alt={product.name} loading="lazy" decoding="async" /><i /><i /></div><span className="eyebrow">{product.category}</span><h3>{product.name}</h3><strong>{money(product.price)}</strong></article>)}</div>
     {!data?.products.length && <p className="empty-inline">The catalog is being synchronized. Check back soon.</p>}
   </main>;
+}
+
+function productArtwork(product: PublicState["products"][number]) {
+  const name = product.name.toLowerCase();
+  if (name.includes("racket")) return "/shop/tennis-racket.svg";
+  if (name.includes("shoe") || name.includes("footwear")) return "/shop/court-shoes.svg";
+  if (name.includes("padel") && name.includes("ball")) return "/shop/padel-ball-tube.svg";
+  if (name.includes("ball")) return "/shop/tennis-ball-can.svg";
+  if (name.includes("grip")) return "/shop/overgrip-pack.svg";
+  if (name.includes("bottle")) return "/shop/water-bottle.svg";
+  return "/shop/sports-kit.svg";
 }
 
 function PublicPlans({ data }: { data: PublicState | null }) {
