@@ -12,7 +12,9 @@
     "test": "tsx --test test/**/*.test.ts",
     "lint": "eslint src test --max-warnings=0",
     "migrate": "tsx src/database/migrate.ts",
-    "migrate:deploy": "node dist/src/database/migrate.js"
+    "migrate:deploy": "node dist/src/database/migrate.js",
+    "security:audit": "npm audit --omit=dev",
+    "quality": "npm run check && npm run lint && npm test && npm run build"
   },
   "engines": {
     "node": ">=20"

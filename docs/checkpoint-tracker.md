@@ -11,6 +11,6 @@
 | 6 - Cafeteria and bar | PASSED |
 | 7 - Enquiries, staff, and financial operations | PASSED |
 | 8 - Smart assistant and matchmaking | PASSED |
-| 9 - Quality, testing, and security | NOT STARTED |
+| 9 - Quality, testing, and security | PASSED |
 | 10 - Render deployment | NOT STARTED |
 | 11 - Documentation and submission readiness | NOT STARTED |

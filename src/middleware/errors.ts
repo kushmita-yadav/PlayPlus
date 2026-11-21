@@ -27,6 +27,14 @@ export function errorHandler(error: unknown, req: Request, res: Response, next: 
     return;
   }
 
+  if (error instanceof SyntaxError && "body" in error) {
+    res.status(400).json({
+      success: false,
+      error: { code: "INVALID_JSON", message: "Request body contains invalid JSON" },
+    });
+    return;
+  }
+
   const apiError = error instanceof ApiError ? error : null;
   const status = apiError?.statusCode ?? 500;
   const expose = apiError !== null;
