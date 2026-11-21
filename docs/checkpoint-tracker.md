@@ -9,7 +9,7 @@
 | 4 - Court booking engine | PASSED |
 | 5 - Sports shop and inventory | PASSED |
 | 6 - Cafeteria and bar | PASSED |
-| 7 - Enquiries, staff, and financial operations | NOT STARTED |
+| 7 - Enquiries, staff, and financial operations | PASSED |
 | 8 - Smart assistant and matchmaking | NOT STARTED |
 | 9 - Quality, testing, and security | NOT STARTED |
 | 10 - Render deployment | NOT STARTED |

@@ -71,6 +71,19 @@ test("admin role cannot be self-assigned during registration", async () => {
   test("cafeteria order placement rejects missing authentication", async () => {
     await request(app).post("/api/v1/cafeteria/orders").send({}).expect(401);
   });
+
+  test("public enquiry creation is available", async () => {
+    await request(app).post("/api/v1/public/enquiries").send({
+      name: "Test Visitor",
+      phone: "9876543210",
+      interest: "Trial session",
+    }).expect([201, 503]);
+  });
+
+  test("quotation and leave operations require authorization", async () => {
+    await request(app).patch("/api/v1/quotations/example/status").send({ status: "sent" }).expect(401);
+    await request(app).patch("/api/v1/leave/example").send({ status: "approved" }).expect(401);
+  });
   assert.ok([400, 403].includes(response.status));
 });
 
