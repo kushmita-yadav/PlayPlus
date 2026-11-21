@@ -25,8 +25,17 @@ The migration runner creates `schema_migrations`, then applies versioned SQL fil
 
 ### Render
 
-Configure `DATABASE_URL` and `JWT_SECRET` in the Render service environment. Deploy using [render.yaml](render.yaml). Run migrations once after setting the database:
+The repository includes a Render Blueprint at [render.yaml](render.yaml). It creates:
 
-```text
-npm run migrate:deploy
-```
+- A Node Web Service named `playpulse-api`
+- A PostgreSQL database named `playpulse-db`
+- A generated `JWT_SECRET`
+- A linked `DATABASE_URL`
+
+Deploy the Blueprint from the Render dashboard and connect the GitHub repository. The web start command runs versioned migrations before starting the API.
+
+After deployment, verify:
+
+- `GET /health` returns HTTP 200
+- `GET /ready` returns HTTP 200 only when PostgreSQL is reachable
+- `GET /api/v1` returns API metadata

@@ -12,5 +12,5 @@
 | 7 - Enquiries, staff, and financial operations | PASSED |
 | 8 - Smart assistant and matchmaking | PASSED |
 | 9 - Quality, testing, and security | PASSED |
-| 10 - Render deployment | NOT STARTED |
+| 10 - Render deployment | BLOCKED |
 | 11 - Documentation and submission readiness | NOT STARTED |
