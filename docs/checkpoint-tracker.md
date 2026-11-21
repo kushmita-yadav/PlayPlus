@@ -3,7 +3,7 @@
 | Checkpoint | Status |
 |---|---|
 | 0 - Environment and repository readiness | PASSED |
-| 1 - Backend foundation and database | NOT STARTED |
+| 1 - Backend foundation and database | PASSED |
 | 2 - Authentication and authorization | NOT STARTED |
 | 3 - Membership management | NOT STARTED |
 | 4 - Court booking engine | NOT STARTED |
