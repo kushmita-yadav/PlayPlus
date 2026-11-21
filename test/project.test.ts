@@ -33,9 +33,12 @@ test("login portal is served and exposes demo account roles", async () => {
 });
 
 test("admin, member, and visitor pages are served", async () => {
-  await request(app).get("/admin").expect(200);
-  await request(app).get("/portal").expect(200);
-  await request(app).get("/visitor").expect(200);
+  const admin = await request(app).get("/admin").expect(200);
+  assert.equal(admin.headers["cache-control"], "no-store");
+  const portal = await request(app).get("/portal").expect(200);
+  assert.equal(portal.headers["cache-control"], "no-store");
+  const visitor = await request(app).get("/visitor").expect(200);
+  assert.equal(visitor.headers["cache-control"], "no-store");
 });
 
 test("health endpoint returns a healthy response", async () => {

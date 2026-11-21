@@ -1,7 +1,12 @@
 const $ = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 
-const session = JSON.parse(sessionStorage.getItem("playpulseSession") || "null");
+let session = null;
+try {
+  session = JSON.parse(sessionStorage.getItem("playpulseSession") || "null");
+} catch {
+  sessionStorage.removeItem("playpulseSession");
+}
 const mode = new URLSearchParams(location.search).get("mode") || (session?.role === "member" ? "member" : "visitor");
 const isMember = mode === "member";
 
@@ -12,6 +17,7 @@ if (!isMember && session?.role === "member") {
 if (isMember && session?.role !== "member") {
   sessionStorage.removeItem("playpulseSession");
   location.replace("/");
+  window.playpulsePortalGuardBlocked = true;
 }
 
 const money = (n) => new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(n);

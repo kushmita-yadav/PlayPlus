@@ -1,9 +1,16 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-const demoSession = JSON.parse(sessionStorage.getItem("playpulseSession") || "null");
+let demoSession = null;
+try {
+  demoSession = JSON.parse(sessionStorage.getItem("playpulseSession") || "null");
+} catch {
+  sessionStorage.removeItem("playpulseSession");
+}
 if (!demoSession || !["admin", "manager", "staff"].includes(demoSession.role)) {
+  sessionStorage.removeItem("playpulseSession");
   window.location.replace("/");
+  window.playpulseAdminGuardBlocked = true;
 }
 
 const money = (value) =>

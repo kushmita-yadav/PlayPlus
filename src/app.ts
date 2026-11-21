@@ -105,6 +105,14 @@ export function createApp() {
 
   const frontendDirectory = path.resolve(process.cwd(), "frontend");
   app.use(express.static(frontendDirectory, { index: false }));
+  app.use("/admin", (_req: Request, res: Response, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
+  app.use(["/portal", "/visitor", "/"], (_req: Request, res: Response, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
   app.get("/", (_req: Request, res: Response) => {
     res.sendFile(path.join(frontendDirectory, "login.html"));
   });
