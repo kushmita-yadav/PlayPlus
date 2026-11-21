@@ -104,6 +104,13 @@ button { cursor: pointer; }
   background: #ddeae2; color: var(--primary);
   display: grid; place-items: center; font-weight: 800;
 }
+.sync-status {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.sync-status[data-state="live"] { color: var(--primary); }
+.sync-status[data-state="local"], .sync-status[data-state="error"] { color: #9a5c08; }
 
 .main { margin-left: 238px; min-height: 100vh; }
 .topbar {

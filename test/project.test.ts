@@ -4,8 +4,9 @@ import request from "supertest";
 import { readFile } from "node:fs/promises";
 import { createApp } from "../src/app.js";
 import { env } from "../src/config/env.js";
-import { signToken } from "../src/auth/auth.js";
+import { createUiSession, signToken } from "../src/auth/auth.js";
 import { validateBookingStart } from "../src/courts/routes.js";
+import { firstAvailableBookingTime, isSlotBooked } from "../frontend/booking.js";
 import type { AuthUser } from "../src/auth/auth.js";
 
 const app = createApp();
@@ -18,18 +19,22 @@ test("sample frontend homepage is served", async () => {
 });
 
 test("sample frontend assets are served", async () => {
-  const css = await request(app).get("/styles.css").expect(200);
+  const page = await request(app).get("/").expect(200);
+  const cssPath = page.text.match(/href="([^"]+\.css)"/)?.[1];
+  const scriptPath = page.text.match(/src="([^"]+\.js)"/)?.[1];
+  assert.ok(cssPath);
+  assert.ok(scriptPath);
+  const css = await request(app).get(cssPath).expect(200);
   assert.match(css.headers["content-type"], /text\/css/);
-  const script = await request(app).get("/app.js").expect(200);
+  const script = await request(app).get(scriptPath).expect(200);
   assert.match(script.headers["content-type"], /javascript/);
+  assert.ok(script.text.length > 0);
 });
 
-test("login portal is served and exposes demo account roles", async () => {
+test("login page serves the React application root", async () => {
   const response = await request(app).get("/").expect(200);
-  assert.match(response.text, /Welcome to PlayPulse/);
-  assert.match(response.text, /admin@champions.club/);
-  assert.match(response.text, /Member/);
-  assert.match(response.text, /Visitor/);
+  assert.match(response.text, /PlayPulse/);
+  assert.match(response.text, /id="root"/);
 });
 
 test("admin, member, and visitor pages are served", async () => {
@@ -42,10 +47,24 @@ test("admin, member, and visitor pages are served", async () => {
   }).expect(200);
   const admin = await adminAgent.get("/admin").expect(200);
   assert.equal(admin.headers["cache-control"], "no-store");
+  assert.match(admin.text, /type="module" crossorigin src="\/assets\//);
   const portal = await request(app).get("/portal").expect(200);
   assert.equal(portal.headers["cache-control"], "no-store");
   const visitor = await request(app).get("/visitor").expect(200);
   assert.equal(visitor.headers["cache-control"], "no-store");
+});
+
+test("demo-session endpoint reports the HttpOnly UI session without exposing its cookie", async () => {
+  const agent = request.agent(app);
+  await agent.post("/api/v1/auth/demo-login").send({
+    email: "member@champions.club",
+    password: "Member@123",
+    role: "member",
+  }).expect(200);
+  const response = await agent.get("/api/v1/auth/demo-session").expect(200);
+  assert.equal(response.body.data.role, "member");
+  assert.equal(response.body.data.email, "member@champions.club");
+  assert.equal(response.headers["cache-control"], "no-store");
 });
 
 test("demo role login creates isolated role cookies", async () => {
@@ -144,6 +163,18 @@ test("court reservation rejects missing authentication", async () => {
 test("court start validation accepts 30-minute intervals", () => {
   assert.equal(validateBookingStart(new Date("2026-11-21T18:30:00.000Z")), true);
   assert.equal(validateBookingStart(new Date("2026-11-21T18:15:00.000Z")), false);
+});
+
+test("demo booking availability is scoped by date and ignores cancelled bookings", () => {
+  const bookings = [
+    { courtId: "C-1", date: "2026-11-21", time: "18:00", status: "Confirmed" },
+    { courtId: "C-1", date: "2026-11-21", time: "18:30", status: "Cancelled" },
+  ];
+  assert.equal(isSlotBooked(bookings, "C-1", "2026-11-21", "18:00"), true);
+  assert.equal(isSlotBooked(bookings, "C-1", "2026-11-21", "18:30"), true);
+  assert.equal(isSlotBooked(bookings, "C-1", "2026-11-22", "18:00"), false);
+  assert.equal(isSlotBooked(bookings, "C-2", "2026-11-21", "18:30"), false);
+  assert.equal(firstAvailableBookingTime(bookings, "C-1", "2026-11-21", "18:00"), "19:00");
 });
 
 test("shop order creation rejects missing authentication", async () => {
@@ -263,4 +294,21 @@ test("protected report export rejects missing authentication", async () => {
 
 test("notification processing rejects missing authentication", async () => {
   await request(app).post("/api/v1/notifications/process").send({}).expect(401);
+});
+
+test("shared demo data is restricted to signed-in staff sessions", async () => {
+  await request(app).get("/api/v1/demo-data").expect(401);
+  await request(app).get("/api/v1/demo-data/events").expect(401);
+  const visitorSession = createUiSession("visitor", "Visitor", "visitor@champions.club");
+  await request(app)
+    .get("/api/v1/demo-data")
+    .set("Cookie", `playpulse_ui=${visitorSession}`)
+    .expect(403);
+});
+
+test("shared demo state migration stores versioned JSON data", async () => {
+  const sql = await readFile("migrations/011_shared_demo_state.sql", "utf8");
+  assert.match(sql, /state jsonb NOT NULL/);
+  assert.match(sql, /version bigint NOT NULL/);
+  assert.match(sql, /singleton_key = 1/);
 });

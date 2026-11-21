@@ -16,6 +16,7 @@ import { assistantRouter } from "./assistant/routes.js";
 import { hardeningRouter } from "./hardening/routes.js";
 import { monitoringRouter, recordRequest, recordDatabaseLatency, prometheusMetricsText } from "./monitoring/routes.js";
 import { notificationRouter } from "./notifications/routes.js";
+import { demoSyncRouter } from "./demo-sync/routes.js";
 import { readUiSession } from "./auth/auth.js";
 import swaggerUi from "swagger-ui-express";
 import { readFileSync } from "node:fs";
@@ -103,8 +104,9 @@ export function createApp() {
   app.use("/api/v1", hardeningRouter);
   app.use("/api/v1", monitoringRouter);
   app.use("/api/v1", notificationRouter);
+  app.use("/api/v1/demo-data", demoSyncRouter);
 
-  const frontendDirectory = path.resolve(process.cwd(), "frontend");
+  const frontendDirectory = path.resolve(process.cwd(), "dist/frontend");
   const readUiCookie = (req: Request) => {
     const match = req.headers.cookie?.match(/(?:^|;\s*)playpulse_ui=([^;]+)/);
     return readUiSession(match ? decodeURIComponent(match[1]) : undefined);
@@ -135,7 +137,11 @@ export function createApp() {
     next();
   });
   app.get("/", (_req: Request, res: Response) => {
-    res.sendFile(path.join(frontendDirectory, "login.html"));
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(frontendDirectory, "index.html"));
+  });
+  app.get("/login", (_req: Request, res: Response) => {
+    res.sendFile(path.join(frontendDirectory, "index.html"));
   });
   app.get("/admin", (_req: Request, res: Response) => {
     res.sendFile(path.join(frontendDirectory, "index.html"));
@@ -146,10 +152,10 @@ export function createApp() {
       res.redirect(302, "/");
       return;
     }
-    res.sendFile(path.join(frontendDirectory, "portal.html"));
+    res.sendFile(path.join(frontendDirectory, "index.html"));
   });
   app.get("/visitor", (_req: Request, res: Response) => {
-    res.sendFile(path.join(frontendDirectory, "portal.html"));
+    res.sendFile(path.join(frontendDirectory, "index.html"));
   });
 
   app.use(notFound);

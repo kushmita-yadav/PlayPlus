@@ -1,3 +1,5 @@
+import { bookingTimes, firstAvailableBookingTime, isSlotBooked } from "./booking.js";
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -138,8 +140,198 @@ const defaultData = {
   ]
 };
 
-let data = JSON.parse(localStorage.getItem("playpulseDemoData") || "null") || structuredClone(defaultData);
-const save = () => localStorage.setItem("playpulseDemoData", JSON.stringify(data));
+let demoDataRecovered = false;
+function loadDemoData() {
+  const stored = localStorage.getItem("playpulseDemoData");
+  if (!stored) return structuredClone(defaultData);
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Stored demo data must be an object");
+    }
+    return parsed;
+  } catch (error) {
+    console.error("Unable to read browser demo data", error);
+    localStorage.removeItem("playpulseDemoData");
+    demoDataRecovered = true;
+    return structuredClone(defaultData);
+  }
+}
+let data = loadDemoData();
+let sharedVersion = 0;
+let sharedSyncEnabled = false;
+let sharedWriteQueue = Promise.resolve();
+let sharedSyncRetryDelay = 1000;
+let sharedSyncRetryTimer;
+let sharedEventSource;
+let sharedEventRetryDelay = 1000;
+let sharedEventRetryTimer;
+const syncTime = () => new Intl.DateTimeFormat("en-IN", {
+  timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit"
+}).format(new Date());
+function updateSyncStatus(state, text) {
+  const status = $("#syncStatus");
+  if (!status) return;
+  status.dataset.state = state;
+  status.textContent = text;
+}
+
+function scheduleSharedSyncRetry(error) {
+  const match = error instanceof Error ? error.message.match(/\((\d{3})\)/) : null;
+  const status = match ? Number(match[1]) : null;
+  if (status !== null && status < 500) {
+    updateSyncStatus("error", "Shared sync unavailable for this account");
+    return;
+  }
+  const delay = sharedSyncRetryDelay;
+  sharedSyncRetryDelay = Math.min(sharedSyncRetryDelay * 2, 30_000);
+  updateSyncStatus("connecting", `Database sync unavailable · retrying in ${Math.ceil(delay / 1000)}s`);
+  clearTimeout(sharedSyncRetryTimer);
+  sharedSyncRetryTimer = setTimeout(() => void initializeSharedData(), delay);
+}
+
+function save() {
+  localStorage.setItem("playpulseDemoData", JSON.stringify(data));
+  if (!sharedSyncEnabled) return;
+  const snapshot = structuredClone(data);
+  sharedWriteQueue = sharedWriteQueue.then(async () => {
+    const response = await fetch("/api/v1/demo-data", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version: sharedVersion, data: snapshot }),
+    });
+    if (response.status === 409) {
+      await refreshSharedData(false);
+      toast("A teammate changed shared data. The latest version was loaded; retry your change.");
+      return;
+    }
+    if (!response.ok) throw new Error(`Shared save failed (${response.status})`);
+    const body = await response.json();
+    sharedVersion = body.data.version;
+    updateSyncStatus("live", `Live sync · ${syncTime()}`);
+  }).catch((error) => {
+    console.error("Unable to save shared demo data", error);
+    updateSyncStatus("error", "Sync failed · saved only in this browser");
+    toast("The server could not save this change. Check the connection and try again.");
+  });
+}
+
+async function refreshSharedData(announce) {
+  const response = await fetch("/api/v1/demo-data");
+  if (!response.ok) throw new Error(`Shared data refresh failed (${response.status})`);
+  const body = await response.json();
+  const remoteVersion = Number(body.data.version);
+  if (body.data.state && remoteVersion > sharedVersion) {
+    data = body.data.state;
+    sharedVersion = remoteVersion;
+    localStorage.setItem("playpulseDemoData", JSON.stringify(data));
+    updateSyncStatus("live", `Live sync · ${syncTime()}`);
+    if (!$("#modalBackdrop").classList.contains("open")) {
+      render($(".nav-item.active")?.dataset.view || "dashboard");
+    }
+    if (announce) toast("Shared data updated");
+  }
+}
+
+function connectSharedEvents() {
+  const events = new EventSource("/api/v1/demo-data/events");
+  sharedEventSource = events;
+  events.onopen = async () => {
+    if (sharedEventSource !== events) return;
+    clearTimeout(sharedEventRetryTimer);
+    sharedEventRetryDelay = 1000;
+    updateSyncStatus("live", `Live sync · ${syncTime()}`);
+    try {
+      await refreshSharedData(false);
+    } catch (error) {
+      console.error("Unable to catch up with shared demo data", error);
+      updateSyncStatus("error", "Live refresh failed");
+    }
+  };
+  events.onmessage = async (event) => {
+    try {
+      const notification = JSON.parse(event.data);
+      if (Number(notification.version) > sharedVersion) {
+        await refreshSharedData(true);
+      }
+    } catch (error) {
+      console.error("Unable to refresh shared demo data", error);
+      updateSyncStatus("error", "Live refresh failed");
+    }
+  };
+  events.onerror = () => {
+    if (sharedEventSource !== events) return;
+    events.close();
+    sharedEventSource = undefined;
+    const delay = sharedEventRetryDelay;
+    sharedEventRetryDelay = Math.min(sharedEventRetryDelay * 2, 30_000);
+    updateSyncStatus("connecting", `Reconnecting live sync in ${Math.ceil(delay / 1000)}s…`);
+    clearTimeout(sharedEventRetryTimer);
+    sharedEventRetryTimer = setTimeout(connectSharedEvents, delay);
+  };
+}
+
+async function initializeSharedData() {
+  try {
+    const response = await fetch("/api/v1/demo-data");
+    if (!response.ok) throw new Error(`Shared data unavailable (${response.status})`);
+    const body = await response.json();
+    sharedVersion = Number(body.data.version);
+    if (body.data.state) {
+      data = body.data.state;
+      localStorage.setItem("playpulseDemoData", JSON.stringify(data));
+    } else {
+      const seedResponse = await fetch("/api/v1/demo-data", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: sharedVersion, data }),
+      });
+      if (seedResponse.status === 409) {
+        await refreshSharedData(false);
+      } else if (!seedResponse.ok) {
+        throw new Error(`Shared demo data initialization failed (${seedResponse.status})`);
+      } else {
+        const seeded = await seedResponse.json();
+        sharedVersion = seeded.data.version;
+      }
+    }
+    sharedSyncEnabled = true;
+    sharedSyncRetryDelay = 1000;
+    connectSharedEvents();
+  } catch (error) {
+    console.error("Shared demo data is unavailable", error);
+    updateSyncStatus("local", demoDataRecovered
+      ? "Local demo only · invalid browser data reset"
+      : "Local demo only · sync retrying");
+    scheduleSharedSyncRetry(error);
+    if (demoDataRecovered) toast("Unreadable browser data was reset to the sample dataset.");
+  }
+  render("dashboard");
+}
+
+window.addEventListener("storage", (event) => {
+  if (sharedSyncEnabled || event.key !== "playpulseDemoData" || !event.newValue) return;
+  try {
+    const updatedData = JSON.parse(event.newValue);
+    if (!updatedData || typeof updatedData !== "object") throw new Error("Stored demo data has an invalid shape");
+    data = updatedData;
+    render($(".nav-item.active")?.dataset.view || "dashboard");
+    toast("Demo data updated in another browser tab");
+  } catch (error) {
+    console.error("Unable to apply browser-tab demo data update", error);
+    updateSyncStatus("error", "Local data refresh failed");
+  }
+});
+const localDateValue = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+const formatBookingDate = (date) => new Intl.DateTimeFormat("en-IN", {
+  day: "numeric", month: "long", year: "numeric"
+}).format(new Date(`${date}T00:00:00`));
+let courtScheduleDate = localDateValue();
 
 const pageTitles = {
   dashboard: "Dashboard",
@@ -218,8 +410,10 @@ function toast(message) {
 }
 
 function renderDashboard() {
+  const today = localDateValue();
+  const todayTransactionCount = data.transactions.filter((transaction) => transaction.date === today).length;
   const todayRevenue = data.transactions
-    .filter((transaction) => transaction.date === "2026-11-21")
+    .filter((transaction) => transaction.date === today)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
   const courtRevenue = data.transactions.filter((item) => item.source === "Court").reduce((sum, item) => sum + item.amount, 0);
   const shopRevenue = data.transactions.filter((item) => item.source === "Shop").reduce((sum, item) => sum + item.amount, 0);
@@ -227,9 +421,9 @@ function renderDashboard() {
 
   $("#appView").innerHTML = `
     <div class="stats-grid">
-      ${statCard("Today's Revenue", money(todayRevenue), "4 transactions today", "₹", "↑ 12.4%")}
+      ${statCard("Today's Revenue", money(todayRevenue), `${todayTransactionCount} transactions today`, "₹", "↑ 12.4%")}
       ${statCard("Active Members", data.members.length, "2 renewals this month", "♙", "↑ 8.1%")}
-      ${statCard("Today's Courts", data.bookings.filter((item) => item.date === "2026-11-21").length, "78% utilisation", "◉", "↑ 6.2%")}
+      ${statCard("Today's Courts", data.bookings.filter((item) => item.date === today).length, "78% utilisation", "◉", "↑ 6.2%")}
       ${statCard("Outstanding", money(data.members.reduce((sum, member) => sum + member.balance, 0)), "3 accounts", "!", "2 overdue")}
     </div>
     <div class="grid-2" style="margin-top:14px">
@@ -296,22 +490,27 @@ function refreshMemberRows() {
   $("#memberRows").innerHTML = memberRows();
 }
 
-function renderCourts() {
+function renderCourts(date = courtScheduleDate) {
+  courtScheduleDate = date;
   $("#appView").innerHTML = `
-    <div class="page-intro"><div><h2>Availability — 21 November 2026</h2><p>One-hour sessions, 30-minute start intervals</p></div></div>
-    <div class="schedule-toolbar"><input class="form-control" type="date" value="2026-11-21"><button class="secondary-button" data-action="open-court-modal">Check booking</button></div>
+    <div class="page-intro"><div><h2>Availability — ${formatBookingDate(date)}</h2><p>One-hour sessions, 30-minute start intervals</p></div></div>
+    <div class="schedule-toolbar"><input class="form-control" id="courtDate" type="date" value="${date}"><button class="secondary-button" data-action="open-court-modal">Check booking</button></div>
     <div class="card" style="overflow-x:auto">
       <div class="schedule-grid">
         <div class="schedule-head">Time</div>${data.courts.slice(0, 4).map((court) => `<div class="schedule-head">${escapeHtml(court.name)}</div>`).join("")}
-        ${["18:00","18:30","19:00","19:30","20:00"].map((time) => `
+        ${bookingTimes.map((time) => `
           <div class="schedule-time">${time}</div>
           ${data.courts.slice(0, 4).map((court) => {
-            const booked = data.bookings.some((booking) => booking.courtId === court.id && booking.time === time);
+            const booked = isSlotBooked(data.bookings, court.id, date, time);
             return `<div class="schedule-slot"><button class="${booked ? "booked" : ""}" ${booked ? "disabled" : ""} data-action="${booked ? "" : `open-court-modal:${court.id}:${time}`}">${booked ? "Booked" : "Available"}</button></div>`;
           }).join("")}`).join("")}
       </div>
     </div>
     <div class="grid-3" style="margin-top:14px">${data.courts.map((court) => `<div class="card"><div class="card-header"><h3>${escapeHtml(court.name)}</h3>${badge(court.status, court.status === "Available" ? "success" : "warning")}</div><p style="color:var(--muted);font-size:12px">${court.sport} · ${money(court.price)} / hour</p></div>`).join("")}</div>`;
+  $("#courtDate").addEventListener("change", () => {
+    courtScheduleDate = $("#courtDate").value;
+    renderCourts();
+  });
 }
 
 function renderShop() {
@@ -429,7 +628,7 @@ function assistantReply(prompt) {
   const lower = prompt.toLowerCase();
   if (lower.includes("stock")) return "Two products are below their low-stock thresholds: Court Training Shoes (3) and Dry-Fit Club Tee (2).";
   if (lower.includes("court") || lower.includes("availability")) return "Tennis Court 1 and Badminton Court 1 have availability later today. Padel Court 1 is marked for maintenance.";
-  if (lower.includes("revenue") || lower.includes("finance")) return `Today’s recorded revenue is ${money(data.transactions.filter((item) => item.date === "2026-11-21").reduce((sum, item) => sum + item.amount, 0))}.`;
+  if (lower.includes("revenue") || lower.includes("finance")) return `Today’s recorded revenue is ${money(data.transactions.filter((item) => item.date === localDateValue()).reduce((sum, item) => sum + item.amount, 0))}.`;
   if (lower.includes("partner") || lower.includes("match")) return "Matching suggestion: Kabir Anand (Silver, skill 4) and Aarav Mehta (Gold, skill 5) are compatible for a tennis session.";
   if (lower.includes("team")) return "Balanced team result: Team A (Aarav 5, Rohan 3) — total 8; Team B (Isha 4, Neha 4) — total 8.";
   return "I can provide a club recommendation from memberships, courts, inventory, finance, enquiries or matchmaking data.";
@@ -498,9 +697,12 @@ function handleModalSubmit(event) {
     const courtId = $("#bookingCourt").value;
     const court = data.courts.find((item) => item.id === courtId);
     const memberId = $("#bookingMember").value;
+    const date = $("#bookingDate").value;
     const time = $("#bookingTime").value;
-    if (data.bookings.some((item) => item.courtId === courtId && item.time === time && item.date === "2026-11-21")) return toast("Court conflict: that slot is already booked");
-    data.bookings.push({ id: `B-${Date.now().toString().slice(-4)}`, memberId: memberId || null, courtId, court: court.name, date: "2026-11-21", time, status: "Confirmed", amount: memberId ? 900 : court.price });
+    if (!court || !date || !time) return toast("Choose a court, date and available time");
+    if (isSlotBooked(data.bookings, courtId, date, time)) return toast("Court conflict: that slot is already booked");
+    data.bookings.push({ id: `B-${Date.now().toString().slice(-4)}`, memberId: memberId || null, courtId, court: court.name, date, time, status: "Confirmed", amount: memberId ? 900 : court.price });
+    courtScheduleDate = date;
   }
   if (action === "add-product") {
     data.products.push({ id: `P-${Date.now()}`, sku: $("#productSku").value, name: $("#productName").value, category: $("#productCategoryModal").value, price: Number($("#productPrice").value), stock: Number($("#productStock").value), threshold: 5, icon: "📦" });
@@ -525,14 +727,14 @@ function handleModalSubmit(event) {
   }
   save();
   closeModal();
-  toast("Changes saved to browser demo data");
+  toast(sharedSyncEnabled ? "Changes saved locally; syncing…" : "Changes saved in this browser only");
   const active = $(".nav-item.active")?.dataset.view || "dashboard";
   render(active);
 }
 
 function handleAction(action) {
   if (!action) return;
-  if (action === "logout") {
+  if (action === "logout" || action === "switch-account") {
     sessionStorage.removeItem("playpulseSession");
     fetch("/api/v1/auth/demo-logout", { method: "POST" }).finally(() => {
       window.location.replace("/");
@@ -562,7 +764,7 @@ function handleAction(action) {
     const product = data.products.find((item) => item.id === action.split(":")[1]);
     if (!product.stock) return toast("This product is out of stock");
     product.stock--;
-    data.transactions.push({ id: `T-${Date.now().toString().slice(-4)}`, source: "Shop", amount: product.price, method: "Counter", date: "2026-11-21", status: "Recorded" });
+    data.transactions.push({ id: `T-${Date.now().toString().slice(-4)}`, source: "Shop", amount: product.price, method: "Counter", date: localDateValue(), status: "Recorded" });
     save();
     toast(`${product.name} sold`);
     renderShop();
@@ -584,7 +786,7 @@ function handleAction(action) {
   if (action === "checkout-tab") {
     if (!(window.cafeCart || []).length) return toast("Add at least one menu item");
     const total = window.cafeCart.reduce((sum, item) => sum + item.price, 0);
-    data.transactions.push({ id: `T-${Date.now().toString().slice(-4)}`, source: "Cafeteria", amount: total, method: "Card / Split", date: "2026-11-21", status: "Recorded" });
+    data.transactions.push({ id: `T-${Date.now().toString().slice(-4)}`, source: "Cafeteria", amount: total, method: "Card / Split", date: localDateValue(), status: "Recorded" });
     window.cafeCart = [];
     save();
     updateCart();
@@ -656,7 +858,28 @@ function sendChat(forcedPrompt) {
 }
 
 function openCourtModal(courtId = "", time = "18:00") {
-  openModal("New court booking", `<div class="form-grid"><div class="form-field"><label>Member</label><select class="form-control" id="bookingMember"><option value="">Walk-in</option>${data.members.map((member) => `<option value="${member.id}">${escapeHtml(member.name)} — ${member.plan}</option>`).join("")}</select></div><div class="form-field"><label>Court</label><select class="form-control" id="bookingCourt">${data.courts.filter((court) => court.status === "Available").map((court) => `<option value="${court.id}" ${court.id === courtId ? "selected" : ""}>${escapeHtml(court.name)}</option>`).join("")}</select></div><div class="form-field"><label>Date</label><input class="form-control" type="date" value="2026-11-21"></div><div class="form-field"><label>Time</label><select class="form-control" id="bookingTime">${["18:00","18:30","19:00","19:30","20:00"].map((slot) => `<option ${slot === time ? "selected" : ""}>${slot}</option>`).join("")}</select></div></div>`, "Confirm booking", "add-court-booking");
+  const date = $("#courtDate")?.value || courtScheduleDate;
+  const courts = data.courts.filter((court) => court.status === "Available");
+  const selectedCourtId = courts.some((court) => court.id === courtId) ? courtId : courts[0]?.id || "";
+  const selectedTime = firstAvailableBookingTime(data.bookings, selectedCourtId, date, time);
+  const timeOptions = bookingTimes.map((slot) => {
+    const booked = isSlotBooked(data.bookings, selectedCourtId, date, slot);
+    return `<option value="${slot}" ${slot === selectedTime ? "selected" : ""} ${booked ? "disabled" : ""}>${slot}${booked ? " — Booked" : ""}</option>`;
+  }).join("");
+  openModal("New court booking", `<div class="form-grid"><div class="form-field"><label>Member</label><select class="form-control" id="bookingMember"><option value="">Walk-in</option>${data.members.map((member) => `<option value="${member.id}">${escapeHtml(member.name)} — ${member.plan}</option>`).join("")}</select></div><div class="form-field"><label>Court</label><select class="form-control" id="bookingCourt">${courts.map((court) => `<option value="${court.id}" ${court.id === selectedCourtId ? "selected" : ""}>${escapeHtml(court.name)}</option>`).join("")}</select></div><div class="form-field"><label>Date</label><input class="form-control" id="bookingDate" type="date" value="${date}" required></div><div class="form-field"><label>Time</label><select class="form-control" id="bookingTime" required>${timeOptions}</select></div></div>`, "Confirm booking", "add-court-booking");
+  const updateTimes = () => {
+    const selectedDate = $("#bookingDate").value;
+    const selectedCourt = $("#bookingCourt").value;
+    const preferredTime = $("#bookingTime").value || time;
+    $("#bookingTime").innerHTML = bookingTimes.map((slot) => {
+      const booked = isSlotBooked(data.bookings, selectedCourt, selectedDate, slot);
+      return `<option value="${slot}" ${booked ? "disabled" : ""}>${slot}${booked ? " — Booked" : ""}</option>`;
+    }).join("");
+    const availableTime = firstAvailableBookingTime(data.bookings, selectedCourt, selectedDate, preferredTime);
+    $("#bookingTime").value = availableTime;
+  };
+  $("#bookingDate").addEventListener("change", updateTimes);
+  $("#bookingCourt").addEventListener("change", updateTimes);
 }
 
 function openMenuModal() {
@@ -727,4 +950,4 @@ const today = new Date();
 $("#currentDate").textContent = new Intl.DateTimeFormat("en-IN", {
   weekday: "long", day: "numeric", month: "long", year: "numeric"
 }).format(today);
-render("dashboard");
+void initializeSharedData();

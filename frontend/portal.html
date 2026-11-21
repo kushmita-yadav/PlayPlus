@@ -17,6 +17,7 @@
       <button data-portal-view="club">The Club</button>
     </nav>
     <div class="header-actions">
+      <span class="portal-sync-status" id="portalSyncStatus" role="status" aria-live="polite">Checking live data…</span>
       <button class="cart-button" id="cartButton">Bag <span id="cartCount">0</span></button>
       <button class="account-button" id="accountButton">Member login</button>
     </div>
@@ -32,6 +33,6 @@
 
   <div class="modal-backdrop" id="portalModalBackdrop" aria-hidden="true"><div class="modal" id="portalModal"></div></div>
   <div class="toast" id="portalToast"></div>
-  <script src="/portal.js"></script>
+  <script type="module" src="/portal.js"></script>
 </body>
 </html>

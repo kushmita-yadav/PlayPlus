@@ -15,6 +15,7 @@ import {
   requireAuth,
   signToken,
   createUiSession,
+  readUiSession,
 } from "./auth.js";
 
 export const authRouter: Router = createRouter();
@@ -68,6 +69,23 @@ authRouter.post("/demo-login", async (req, res, next) => {
 authRouter.post("/demo-logout", (_req, res) => {
   res.setHeader("Set-Cookie", "playpulse_ui=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
   res.status(200).json({ success: true, data: { signedOut: true } });
+});
+
+authRouter.get("/demo-session", (req, res) => {
+  const cookie = req.headers.cookie?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("playpulse_ui="))
+    ?.slice("playpulse_ui=".length);
+  const session = readUiSession(cookie);
+  res.setHeader("Cache-Control", "no-store");
+  res.status(200).json({
+    success: true,
+    data: session ? {
+      role: session.role,
+      name: session.name,
+      email: session.email,
+    } : null,
+  });
 });
 
 authRouter.post("/login", async (req, res, next) => {

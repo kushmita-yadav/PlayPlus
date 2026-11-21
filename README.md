@@ -336,21 +336,27 @@ git --version
 
 ## Quick Start
 
-### Run the sample frontend
+### Run the React frontend
 
-The repository includes a complete responsive frontend prototype under `frontend/`.
-The Express server serves it at `/`, with sample data stored in browser `localStorage`.
+The client is a React + TypeScript application built with Vite. Its development server proxies API
+requests and live event streams to the Express API. Configure PostgreSQL and the required values
+from `.env.example` before using shared data and sign-in.
 
 ```powershell
-$env:JWT_SECRET="a-local-development-secret-at-least-32-characters"
+npm.cmd install
+npm.cmd run dev
+```
+
+Open `http://localhost:5173` for the React interface. The API remains available at
+`http://localhost:3000` by default. For the built, Express-served application:
+
+```powershell
+npm.cmd run build
 npm.cmd start
 ```
 
-Open:
-
-- `http://localhost:3000` for the PlayPulse frontend
-- `http://localhost:3000/health` for backend health
-- `http://localhost:3000/api/v1/docs/` for Swagger UI
+Then open `http://localhost:3000`. Backend health and API documentation are available at
+`http://localhost:3000/health` and `http://localhost:3000/api/v1/docs/`.
 
 ### Demo accounts
 
@@ -366,19 +372,42 @@ Portal URLs:
 - `http://localhost:3000/portal?mode=member` — Signed-in member experience
 - `http://localhost:3000/visitor` — Public visitor experience
 
-The frontend includes sample data and demo interactions for:
+The React interface currently provides:
 
-- Dashboard and revenue
-- Members and membership renewals
-- Court availability and bookings
-- Sports shop products and stock
-- Cafeteria tables, tabs, menu and kitchen queue
-- Enquiries and quotations
-- Staff, shifts, leave and payroll
-- Finance, invoices and exports
-- Notifications and reminders
-- Smart assistant and matchmaking
-- Settings and backend connectivity
+- Role-aware admin/manager workspaces, member portal, and visitor catalog
+- Shared dashboard, records for club operations, staff leave review, and basic record creation
+- Date-aware court availability and transactional bookings
+- Live PostgreSQL-backed updates through Server-Sent Events
+- Demo account sign-in, session restoration, account switching, and logout
+
+### Real-time data synchronization
+
+To share admin changes across signed-in sessions and synchronize court availability in the
+visitor/member portal, configure `DATABASE_URL` in the local `.env`, then run:
+
+```powershell
+npm.cmd run migrate
+npm.cmd run dev
+```
+
+The local development database must be PostgreSQL with UTF-8 encoding. Keep its connection
+string in the ignored `.env` file and never commit credentials. On the configured development
+machine, PlayPulse uses a dedicated PostgreSQL cluster at
+`%LOCALAPPDATA%\PlayPulse\PostgreSQL` on `127.0.0.1:5433`; it is separate from the Odoo
+database. Keep that local cluster running while the app is running. Verify the connection at
+`http://localhost:3000/ready`; it should return `200` with `"status":"ready"`.
+
+The admin dashboard stores its demo dataset in PostgreSQL with optimistic version checks.
+Database notifications stream changes to connected admin/manager dashboards and public
+availability/catalog views. Concurrent edits that use an outdated version are rejected and
+the latest state is reloaded instead of silently overwriting another user's changes.
+The UI shows the last sync time and retries transient database outages automatically. If
+PostgreSQL is not configured, it clearly reports local-only demo mode; those edits do not sync
+across devices.
+
+The visitor/member API projection includes court availability, catalog and plan data. For a
+signed-in demo member it additionally includes only that member's own profile, bookings, and
+orders. The sample member account is currently mapped to demo member `M-1001`.
 
 Clone the repository:
 
