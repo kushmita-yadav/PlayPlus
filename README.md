@@ -342,6 +342,10 @@ The client is a React + TypeScript application built with Vite. Its development 
 requests and live event streams to the Express API. Configure PostgreSQL and the required values
 from `.env.example` before using shared data and sign-in.
 
+Frontend source is grouped by responsibility under `frontend/src`: `app` contains the React entry
+point, `data` contains the demo snapshot, `lib` contains shared API and booking utilities, `types`
+contains shared client types, and `styles` contains global styles.
+
 ```powershell
 npm.cmd install
 npm.cmd run dev

@@ -1,4 +1,4 @@
-import type { DemoState } from "./types";
+import type { DemoState } from "../types";
 
 const today = new Date();
 const date = (offset: number) => {

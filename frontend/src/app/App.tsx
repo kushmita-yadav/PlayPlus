@@ -4,11 +4,11 @@ import {
   ClipboardList, Coffee, Dumbbell, LayoutDashboard, LogOut, Menu, Package, Search, Settings,
   ShieldCheck, ShoppingBag, Sparkles, Users, X,
 } from "lucide-react";
-import { apiRequest, ApiRequestError, type ApiEnvelope } from "./api";
-import { initialDemoState } from "./data";
-import { bookingTimes, isSlotBooked } from "./lib/booking.js";
-import type { Booking } from "./lib/booking.js";
-import type { DemoRole, DemoRow, DemoSession, DemoState, ModuleKey, PublicState, SyncStatus } from "./types";
+import { apiRequest, ApiRequestError, type ApiEnvelope } from "../lib/api";
+import { initialDemoState } from "../data/demo-state";
+import { bookingTimes, isSlotBooked } from "../lib/booking.js";
+import type { Booking } from "../lib/booking.js";
+import type { DemoRole, DemoRow, DemoSession, DemoState, ModuleKey, PublicState, SyncStatus } from "../types";
 
 const navigation = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
