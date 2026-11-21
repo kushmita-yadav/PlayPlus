@@ -33,12 +33,51 @@ test("login portal is served and exposes demo account roles", async () => {
 });
 
 test("admin, member, and visitor pages are served", async () => {
-  const admin = await request(app).get("/admin").expect(200);
+  await request(app).get("/admin").expect(302);
+  const adminAgent = request.agent(app);
+  await adminAgent.post("/api/v1/auth/demo-login").send({
+    email: "admin@champions.club",
+    password: "Admin@123",
+    role: "admin",
+  }).expect(200);
+  const admin = await adminAgent.get("/admin").expect(200);
   assert.equal(admin.headers["cache-control"], "no-store");
   const portal = await request(app).get("/portal").expect(200);
   assert.equal(portal.headers["cache-control"], "no-store");
   const visitor = await request(app).get("/visitor").expect(200);
   assert.equal(visitor.headers["cache-control"], "no-store");
+});
+
+test("demo role login creates isolated role cookies", async () => {
+  const member = await request(app).post("/api/v1/auth/demo-login").send({
+    email: "member@champions.club",
+    password: "Member@123",
+    role: "member",
+  }).expect(200);
+  assert.match(member.headers["set-cookie"][0], /playpulse_ui=/);
+  assert.match(member.headers["set-cookie"][0], /HttpOnly/);
+  assert.equal(member.body.data.role, "member");
+
+  const admin = await request(app).post("/api/v1/auth/demo-login").send({
+    email: "admin@champions.club",
+    password: "Admin@123",
+    role: "admin",
+  }).expect(200);
+  assert.equal(admin.body.data.role, "admin");
+
+  await request(app).post("/api/v1/auth/demo-login").send({
+    email: "member@champions.club",
+    password: "wrong-password",
+    role: "member",
+  }).expect(401);
+});
+
+test("member portal requires a member demo session", async () => {
+  await request(app).get("/portal?mode=member").expect(302);
+});
+
+test("visitor page remains public", async () => {
+  await request(app).get("/visitor").expect(200);
 });
 
 test("health endpoint returns a healthy response", async () => {

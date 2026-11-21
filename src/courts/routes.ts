@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../database/pool.js";
-import { requireAuth, requirePermission } from "../auth/auth.js";
+import { requireAuth, requireMemberOrPermission, requirePermission } from "../auth/auth.js";
 import { ApiError } from "../middleware/errors.js";
 import { enqueueNotification } from "../notifications/outbox.js";
 
@@ -146,12 +146,24 @@ courtRouter.get("/availability", async (req, res, next) => {
   }
 });
 
-courtRouter.post("/reservations", requireAuth, requirePermission("courts.manage"), async (req, res, next) => {
+courtRouter.post("/reservations", requireAuth, requireMemberOrPermission("courts.manage"), async (req, res, next) => {
   const client = pool ? await pool.connect() : null;
   try {
     if (!client) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
     const input = reservationSchema.parse(req.body);
     const idempotencyKey = req.header("idempotency-key");
+
+    if (req.auth?.role === "member") {
+      if (input.memberId) {
+        const ownedMember = await client.query(
+          "SELECT id FROM members WHERE id=$1 AND account_id=$2",
+          [input.memberId, req.auth.id],
+        );
+        if (!ownedMember.rowCount) {
+          throw new ApiError(403, "Members may only book for their own member profile", "MEMBER_SCOPE_VIOLATION");
+        }
+      }
+    }
 
     if (idempotencyKey) {
       const existing = await client.query(

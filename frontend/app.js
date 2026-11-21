@@ -7,10 +7,36 @@ try {
 } catch {
   sessionStorage.removeItem("playpulseSession");
 }
-if (!demoSession || !["admin", "manager", "staff"].includes(demoSession.role)) {
+if (!demoSession || !["admin", "manager", "staff", "front_desk"].includes(demoSession.role)) {
   sessionStorage.removeItem("playpulseSession");
   window.location.replace("/");
   window.playpulseAdminGuardBlocked = true;
+}
+
+const rolePermissions = {
+  admin: ["dashboard","members","courts","shop","cafeteria","enquiries","staff","finance","assistant","notifications","reports","settings"],
+  manager: ["dashboard","members","courts","shop","cafeteria","enquiries","staff","finance","assistant","notifications","reports"],
+  staff: ["dashboard","courts","shop","cafeteria","enquiries","assistant","notifications"],
+  front_desk: ["dashboard","members","courts","enquiries","notifications"],
+};
+const permittedViews = rolePermissions[demoSession?.role] || [];
+
+$$(".nav-item").forEach((item) => {
+  const view = item.dataset.view;
+  if (view && permittedViews.includes(view) === false) {
+    item.hidden = true;
+  }
+});
+if (demoSession?.role) {
+  const profileName = $("#sidebar .profile strong");
+  if (profileName) {
+    profileName.textContent = demoSession.name || "Authorized User";
+  }
+  const roleName = $("#sidebar .profile small");
+  if (roleName) {
+    roleName.textContent = demoSession.role === "admin" ? "System Administrator" :
+      demoSession.role === "manager" ? "Club Manager" : "Club Staff";
+  }
 }
 
 const money = (value) =>
@@ -438,6 +464,9 @@ function renderSettings() {
 }
 
 function render(view) {
+  if (!permittedViews.includes(view)) {
+    view = "dashboard";
+  }
   const title = pageTitles[view] || "Dashboard";
   $("#pageTitle").textContent = title;
   $("#quickAction").textContent = quickLabels[view];
@@ -505,7 +534,9 @@ function handleAction(action) {
   if (!action) return;
   if (action === "logout") {
     sessionStorage.removeItem("playpulseSession");
-    window.location.replace("/");
+    fetch("/api/v1/auth/demo-logout", { method: "POST" }).finally(() => {
+      window.location.replace("/");
+    });
     return;
   }
   if (action.startsWith("view-member:")) {

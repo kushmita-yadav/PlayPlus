@@ -4,6 +4,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 import { pool } from "../database/pool.js";
+import { env } from "../config/env.js";
 import { ApiError } from "../middleware/errors.js";
 import {
   authenticate,
@@ -13,6 +14,7 @@ import {
   registerSchema,
   requireAuth,
   signToken,
+  createUiSession,
 } from "./auth.js";
 
 export const authRouter: Router = createRouter();
@@ -28,6 +30,44 @@ authRouter.post("/register", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+authRouter.post("/demo-login", async (req, res, next) => {
+  try {
+    const input = z.object({
+      email: z.string().email(),
+      password: z.string().min(1),
+      role: z.enum(["admin", "member", "visitor"]),
+    }).parse(req.body);
+    const accounts = {
+      admin: { email: "admin@champions.club", password: "Admin@123", name: "Alex Kumar" },
+      member: { email: "member@champions.club", password: "Member@123", name: "Aarav Mehta" },
+      visitor: { email: "visitor@champions.club", password: "Visitor@123", name: "Visitor" },
+    };
+    if (input.role === "visitor") {
+      const session = createUiSession("visitor", "Visitor", "visitor@champions.club");
+      res.setHeader("Set-Cookie", `playpulse_ui=${session}; Path=/; HttpOnly; SameSite=Lax${env.NODE_ENV === "production" ? "; Secure" : ""}`);
+      res.status(200).json({ success: true, data: { role: "visitor", name: "Visitor" } });
+      return;
+    }
+    const account = accounts[input.role];
+    if (input.email.toLowerCase() !== account.email || input.password !== account.password) {
+      throw new ApiError(401, "Invalid demo credentials", "INVALID_DEMO_CREDENTIALS");
+    }
+    const session = createUiSession(input.role, account.name, account.email);
+    res.setHeader("Set-Cookie", `playpulse_ui=${session}; Path=/; HttpOnly; SameSite=Lax${env.NODE_ENV === "production" ? "; Secure" : ""}`);
+    res.status(200).json({
+      success: true,
+      data: { role: input.role, name: account.name, email: account.email },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.post("/demo-logout", (_req, res) => {
+  res.setHeader("Set-Cookie", "playpulse_ui=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+  res.status(200).json({ success: true, data: { signedOut: true } });
 });
 
 authRouter.post("/login", async (req, res, next) => {

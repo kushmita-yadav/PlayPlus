@@ -44,8 +44,18 @@ $("#forgotButton").addEventListener("click", () => {
 });
 
 $("#visitorButton").addEventListener("click", () => {
-  sessionStorage.setItem("playpulseSession", JSON.stringify({ role: "visitor", name: "Visitor" }));
-  window.location.href = "/portal?mode=visitor";
+  fetch("/api/v1/auth/demo-login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "visitor@champions.club",
+      password: "Visitor@123",
+      role: "visitor",
+    }),
+  }).finally(() => {
+    sessionStorage.setItem("playpulseSession", JSON.stringify({ role: "visitor", name: "Visitor" }));
+    window.location.href = "/visitor";
+  });
 });
 
 $("#loginForm").addEventListener("submit", (event) => {
@@ -63,5 +73,11 @@ $("#loginForm").addEventListener("submit", (event) => {
     name: account.name,
     email: account.email
   }));
-  window.location.href = account.role === "admin" ? "/admin" : "/portal?mode=member";
+  fetch("/api/v1/auth/demo-login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, role: selectedRole }),
+  }).finally(() => {
+    window.location.href = account.role === "admin" ? "/admin" : "/portal?mode=member";
+  });
 });

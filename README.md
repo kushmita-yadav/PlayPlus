@@ -810,6 +810,28 @@ The initial role model contains:
 - `manager`
 - `admin`
 
+### Role hierarchy and frontend encapsulation
+
+The UI and server routes use this inheritance order:
+
+| Role | Accessible experience |
+|---|---|
+| Visitor | Public club, plans, courts, shop, and trial pages only |
+| Member | Visitor pages plus the signed-in member account area |
+| Front Desk | Member-facing operations, member records, court and enquiry tasks |
+| Staff | Front desk operations plus shop, cafeteria, court, and assistant tasks |
+| Manager | Operational dashboard, members, finance, staff, reports, and settings access |
+| Admin | Complete dashboard and every management feature |
+
+Protected UI routes are separated at the server:
+
+- `/admin` requires an authenticated operational role
+- `/portal?mode=member` requires a member session
+- `/visitor` remains public
+- `/` is the login and role-selection page
+
+Frontend navigation is filtered by role and the backend continues to enforce JWT permissions. Frontend filtering is convenience; it is not the security boundary.
+
 ### Permission Model
 
 Examples of permissions include:

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../database/pool.js";
-import { requireAuth, requirePermission } from "../auth/auth.js";
+import { requireAuth, requireMemberOrPermission, requirePermission } from "../auth/auth.js";
 import { ApiError } from "../middleware/errors.js";
 import { enqueueNotification } from "../notifications/outbox.js";
 
@@ -118,11 +118,20 @@ shopRouter.get("/low-stock", requireAuth, requirePermission("shop.manage"), asyn
   }
 });
 
-shopRouter.post("/orders", requireAuth, requirePermission("shop.manage"), async (req, res, next) => {
+shopRouter.post("/orders", requireAuth, requireMemberOrPermission("shop.manage"), async (req, res, next) => {
   const client = pool ? await pool.connect() : null;
   try {
     if (!client) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
     const input = orderSchema.parse(req.body);
+    if (req.auth?.role === "member" && input.memberId) {
+      const ownedMember = await client.query(
+        "SELECT id FROM members WHERE id=$1 AND account_id=$2",
+        [input.memberId, req.auth.id],
+      );
+      if (!ownedMember.rowCount) {
+        throw new ApiError(403, "Members may only place orders for their own member profile", "MEMBER_SCOPE_VIOLATION");
+      }
+    }
     const idempotencyKey = req.header("idempotency-key");
     if (idempotencyKey) {
       const existing = await client.query(

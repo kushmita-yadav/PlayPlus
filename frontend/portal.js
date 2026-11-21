@@ -7,7 +7,11 @@ try {
 } catch {
   sessionStorage.removeItem("playpulseSession");
 }
-const mode = new URLSearchParams(location.search).get("mode") || (session?.role === "member" ? "member" : "visitor");
+const requestedMode = new URLSearchParams(location.search).get("mode");
+const mode = location.pathname === "/visitor" ? "visitor"
+  : requestedMode === "member" ? "member"
+  : session?.role === "member" ? "member"
+  : "visitor";
 const isMember = mode === "member";
 
 if (!isMember && session?.role === "member") {
@@ -135,7 +139,9 @@ function renderMember(view) {
     button.classList.add("active");
     if (button.dataset.memberView==="logout") {
       sessionStorage.removeItem("playpulseSession");
-      location.href="/";
+      fetch("/api/v1/auth/demo-logout", { method: "POST" }).finally(() => {
+        location.href="/";
+      });
       return;
     }
     renderMemberContent(button.dataset.memberView);

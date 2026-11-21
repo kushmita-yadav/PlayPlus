@@ -16,6 +16,7 @@ import { assistantRouter } from "./assistant/routes.js";
 import { hardeningRouter } from "./hardening/routes.js";
 import { monitoringRouter, recordRequest, recordDatabaseLatency, prometheusMetricsText } from "./monitoring/routes.js";
 import { notificationRouter } from "./notifications/routes.js";
+import { readUiSession } from "./auth/auth.js";
 import swaggerUi from "swagger-ui-express";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -104,12 +105,32 @@ export function createApp() {
   app.use("/api/v1", notificationRouter);
 
   const frontendDirectory = path.resolve(process.cwd(), "frontend");
+  const readUiCookie = (req: Request) => {
+    const match = req.headers.cookie?.match(/(?:^|;\s*)playpulse_ui=([^;]+)/);
+    return readUiSession(match ? decodeURIComponent(match[1]) : undefined);
+  };
+  const roleLevel = (role: string | undefined) => ({
+    visitor: 0,
+    member: 10,
+    front_desk: 20,
+    staff: 30,
+    manager: 40,
+    admin: 50,
+  }[role ?? ""] ?? -1);
+
   app.use(express.static(frontendDirectory, { index: false }));
-  app.use("/admin", (_req: Request, res: Response, next) => {
+  app.use("/admin", (req: Request, res: Response, next) => {
     res.setHeader("Cache-Control", "no-store");
-    next();
+    const ui = readUiCookie(req);
+    if (!ui) {
+      res.redirect(302, "/");
+    } else if (roleLevel(ui.role) < 20) {
+      res.redirect(302, ui.role === "member" ? "/portal?mode=member" : "/visitor");
+    } else {
+      next();
+    }
   });
-  app.use(["/portal", "/visitor", "/"], (_req: Request, res: Response, next) => {
+  app.use(["/portal", "/visitor", "/"], (req: Request, res: Response, next) => {
     res.setHeader("Cache-Control", "no-store");
     next();
   });
@@ -120,6 +141,11 @@ export function createApp() {
     res.sendFile(path.join(frontendDirectory, "index.html"));
   });
   app.get("/portal", (_req: Request, res: Response) => {
+    const ui = readUiCookie(_req);
+    if (_req.query.mode === "member" && ui?.role !== "member") {
+      res.redirect(302, "/");
+      return;
+    }
     res.sendFile(path.join(frontendDirectory, "portal.html"));
   });
   app.get("/visitor", (_req: Request, res: Response) => {

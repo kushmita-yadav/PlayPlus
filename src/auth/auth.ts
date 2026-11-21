@@ -159,3 +159,85 @@ export function requirePermission(permission: string) {
     }
   };
 }
+
+const roleHierarchy: Record<string, number> = {
+  visitor: 0,
+  member: 10,
+  front_desk: 20,
+  staff: 30,
+  manager: 40,
+  admin: 50,
+};
+
+export function requireRole(...roles: string[]) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.auth) {
+      next(new ApiError(401, "Bearer authentication required", "UNAUTHORIZED"));
+    } else if (!roles.includes(req.auth.role)) {
+      next(new ApiError(403, "This role is not permitted", "FORBIDDEN"));
+    } else {
+      next();
+    }
+  };
+}
+
+export function requireRoleAtLeast(minimumRole: string) {
+  const minimum = roleHierarchy[minimumRole] ?? Number.MAX_SAFE_INTEGER;
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.auth) {
+      next(new ApiError(401, "Bearer authentication required", "UNAUTHORIZED"));
+    } else if ((roleHierarchy[req.auth.role] ?? -1) < minimum) {
+      next(new ApiError(403, "Insufficient role level", "FORBIDDEN"));
+    } else {
+      next();
+    }
+  };
+}
+
+export function requireMemberOrPermission(permission: string) {
+  const permissionGuard = requirePermission(permission);
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (req.auth?.role === "member") {
+      next();
+    } else {
+      permissionGuard(req, res, next);
+    }
+  };
+}
+
+export function createUiSession(role: string, name: string, email: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    role,
+    name,
+    email,
+    exp: Date.now() + 8 * 60 * 60 * 1000,
+  })).toString("base64url");
+  const signature = createHash("sha256")
+    .update(`${payload}.${env.JWT_SECRET ?? "playpulse-local-ui-secret"}`)
+    .digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+export function readUiSession(cookieValue: string | undefined): {
+  role: string;
+  name: string;
+  email: string;
+  exp: number;
+} | null {
+  if (!cookieValue) return null;
+  const parts = cookieValue.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, suppliedSignature] = parts;
+  const expectedSignature = createHash("sha256")
+    .update(`${payload}.${env.JWT_SECRET ?? "playpulse-local-ui-secret"}`)
+    .digest("base64url");
+  if (suppliedSignature !== expectedSignature) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (typeof parsed.exp !== "number" || parsed.exp < Date.now()) return null;
+    if (typeof parsed.role !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
