@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#173f35" />
+    <title>PlayPulse | Champions Club</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <button class="brand" data-view="dashboard" aria-label="PlayPulse dashboard">
+          <span class="brand-mark">P</span>
+          <span><strong>PlayPulse</strong><small>Champions Club</small></span>
+        </button>
+
+        <nav class="main-nav" aria-label="Primary navigation">
+          <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>Dashboard</span></button>
+          <button class="nav-item" data-view="members"><span class="nav-icon">♙</span><span>Members</span></button>
+          <button class="nav-item" data-view="courts"><span class="nav-icon">◉</span><span>Courts</span></button>
+          <button class="nav-item" data-view="shop"><span class="nav-icon">◇</span><span>Sports Shop</span></button>
+          <button class="nav-item" data-view="cafeteria"><span class="nav-icon">♨</span><span>Cafeteria</span></button>
+          <button class="nav-item" data-view="enquiries"><span class="nav-icon">✉</span><span>Enquiries</span></button>
+          <button class="nav-item" data-view="staff"><span class="nav-icon">♟</span><span>Staff</span></button>
+          <button class="nav-item" data-view="finance"><span class="nav-icon">₹</span><span>Finance</span></button>
+          <button class="nav-item" data-view="assistant"><span class="nav-icon">✦</span><span>Smart Assistant</span></button>
+          <button class="nav-item" data-view="notifications"><span class="nav-icon">◷</span><span>Notifications</span></button>
+          <button class="nav-item" data-view="reports"><span class="nav-icon">▧</span><span>Reports</span></button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span><span>Settings</span></button>
+          <div class="profile">
+            <span class="profile-avatar">AK</span>
+            <span><strong>Alex Kumar</strong><small>Club Manager</small></span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-title">
+            <button class="menu-button" id="menuButton" aria-label="Toggle navigation">☰</button>
+            <div>
+              <p id="currentDate"></p>
+              <h1 id="pageTitle">Dashboard</h1>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" id="notificationButton" title="Notifications">🔔<span class="notification-dot"></span></button>
+            <button class="primary-button" id="quickAction">+ New booking</button>
+          </div>
+        </header>
+
+        <section id="appView" class="app-view"></section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+      <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+    </div>
+    <div class="toast" id="toast" role="status"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

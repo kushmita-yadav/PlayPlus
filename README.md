@@ -336,6 +336,36 @@ git --version
 
 ## Quick Start
 
+### Run the sample frontend
+
+The repository includes a complete responsive frontend prototype under `frontend/`.
+The Express server serves it at `/`, with sample data stored in browser `localStorage`.
+
+```powershell
+$env:JWT_SECRET="a-local-development-secret-at-least-32-characters"
+npm.cmd start
+```
+
+Open:
+
+- `http://localhost:3000` for the PlayPulse frontend
+- `http://localhost:3000/health` for backend health
+- `http://localhost:3000/api/v1/docs/` for Swagger UI
+
+The frontend includes sample data and demo interactions for:
+
+- Dashboard and revenue
+- Members and membership renewals
+- Court availability and bookings
+- Sports shop products and stock
+- Cafeteria tables, tabs, menu and kitchen queue
+- Enquiries and quotations
+- Staff, shifts, leave and payroll
+- Finance, invoices and exports
+- Notifications and reminders
+- Smart assistant and matchmaking
+- Settings and backend connectivity
+
 Clone the repository:
 
 ```powershell

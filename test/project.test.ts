@@ -10,6 +10,20 @@ import type { AuthUser } from "../src/auth/auth.js";
 
 const app = createApp();
 
+test("sample frontend homepage is served", async () => {
+  const response = await request(app).get("/").expect(200);
+  assert.match(response.headers["content-type"], /text\/html/);
+  assert.match(response.text, /PlayPulse/);
+  assert.match(response.text, /Champions Club/);
+});
+
+test("sample frontend assets are served", async () => {
+  const css = await request(app).get("/styles.css").expect(200);
+  assert.match(css.headers["content-type"], /text\/css/);
+  const script = await request(app).get("/app.js").expect(200);
+  assert.match(script.headers["content-type"], /javascript/);
+});
+
 test("health endpoint returns a healthy response", async () => {
   const response = await request(app).get("/health").expect(200);
   assert.equal(response.body.status, "healthy");

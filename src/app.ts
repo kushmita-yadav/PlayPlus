@@ -103,6 +103,12 @@ export function createApp() {
   app.use("/api/v1", monitoringRouter);
   app.use("/api/v1", notificationRouter);
 
+  const frontendDirectory = path.resolve(process.cwd(), "frontend");
+  app.use(express.static(frontendDirectory));
+  app.get("/", (_req: Request, res: Response) => {
+    res.sendFile(path.join(frontendDirectory, "index.html"));
+  });
+
   app.use(notFound);
   app.use(errorHandler);
   return app;
