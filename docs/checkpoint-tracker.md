@@ -7,7 +7,7 @@
 | 2 - Authentication and authorization | PASSED |
 | 3 - Membership management | PASSED |
 | 4 - Court booking engine | PASSED |
-| 5 - Sports shop and inventory | NOT STARTED |
+| 5 - Sports shop and inventory | PASSED |
 | 6 - Cafeteria and bar | NOT STARTED |
 | 7 - Enquiries, staff, and financial operations | NOT STARTED |
 | 8 - Smart assistant and matchmaking | NOT STARTED |

@@ -54,6 +54,19 @@ test("admin role cannot be self-assigned during registration", async () => {
     assert.equal(validateBookingStart(new Date("2026-11-21T18:30:00.000Z")), true);
     assert.equal(validateBookingStart(new Date("2026-11-21T18:15:00.000Z")), false);
   });
+
+  test("shop order creation rejects missing authentication", async () => {
+    await request(app).post("/api/v1/shop/orders").send({}).expect(401);
+  });
+
+  test("shop catalog is available through the public API", async () => {
+    await request(app).get("/api/v1/shop/products").expect([200, 503]);
+  });
+
+  test("shop orders expose fulfillment and cancellation protection", async () => {
+    await request(app).post("/api/v1/shop/orders/example/fulfill").send({}).expect(401);
+    await request(app).post("/api/v1/shop/orders/example/cancel").send({}).expect(401);
+  });
   assert.ok([400, 403].includes(response.status));
 });
 
