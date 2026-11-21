@@ -3,12 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Backend-first intelligent sports club management system",
+  "description": "Sports club management platform built with React, TypeScript, Express, and PostgreSQL",
   "scripts": {
     "dev": "concurrently -k -n api,web \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch src/server.ts",
     "dev:web": "vite --config vite.config.ts",
-    "frontend": "tsx src/server.ts",
     "start": "node dist/src/server.js",
     "build": "npm run build:api && npm run build:web",
     "build:api": "tsc -p tsconfig.json",

@@ -6,8 +6,8 @@ import {
 } from "lucide-react";
 import { apiRequest, ApiRequestError, type ApiEnvelope } from "./api";
 import { initialDemoState } from "./data";
-import { bookingTimes, isSlotBooked } from "../booking.js";
-import type { Booking } from "../booking.js";
+import { bookingTimes, isSlotBooked } from "./lib/booking.js";
+import type { Booking } from "./lib/booking.js";
 import type { DemoRole, DemoRow, DemoSession, DemoState, ModuleKey, PublicState, SyncStatus } from "./types";
 
 const navigation = [

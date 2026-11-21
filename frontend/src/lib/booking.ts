@@ -1,6 +1,19 @@
+export interface Booking {
+  courtId: string;
+  date: string;
+  time: string;
+  status?: string;
+  durationMinutes?: number;
+}
+
 export const bookingTimes = ["18:00", "18:30", "19:00", "19:30", "20:00"];
 
-export function isSlotBooked(bookings, courtId, date, time) {
+export function isSlotBooked(
+  bookings: readonly Booking[],
+  courtId: string,
+  date: string,
+  time: string,
+): boolean {
   const [hour, minute] = time.split(":").map(Number);
   const slotStart = hour * 60 + minute;
   return bookings.some((booking) => {
@@ -15,7 +28,13 @@ export function isSlotBooked(bookings, courtId, date, time) {
   });
 }
 
-export function firstAvailableBookingTime(bookings, courtId, date, preferredTime, times = bookingTimes) {
+export function firstAvailableBookingTime(
+  bookings: readonly Booking[],
+  courtId: string,
+  date: string,
+  preferredTime: string,
+  times: readonly string[] = bookingTimes,
+): string {
   if (preferredTime && times.includes(preferredTime) &&
       !isSlotBooked(bookings, courtId, date, preferredTime)) {
     return preferredTime;

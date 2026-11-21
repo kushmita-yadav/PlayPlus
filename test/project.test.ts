@@ -6,7 +6,7 @@ import { createApp } from "../src/app.js";
 import { env } from "../src/config/env.js";
 import { createUiSession, signToken } from "../src/auth/auth.js";
 import { validateBookingStart } from "../src/courts/routes.js";
-import { firstAvailableBookingTime, isSlotBooked } from "../frontend/booking.js";
+import { firstAvailableBookingTime, isSlotBooked } from "../frontend/src/lib/booking.js";
 import type { AuthUser } from "../src/auth/auth.js";
 
 const app = createApp();
