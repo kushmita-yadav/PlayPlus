@@ -8,6 +8,7 @@ export const pool = env.DATABASE_URL
       max: 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
+      ssl: env.DATABASE_SSL === "true" ? { rejectUnauthorized: true } : undefined,
     })
   : null;
 

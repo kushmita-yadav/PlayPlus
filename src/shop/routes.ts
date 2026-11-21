@@ -225,6 +225,12 @@ shopRouter.post("/orders", requireAuth, requirePermission("shop.manage"), async 
         [order.rows[0].id, subtotal - discountAmount, input.paymentMethod,
          idempotencyKey ? `${idempotencyKey}:payment` : null],
       );
+      await client.query(
+        `INSERT INTO receipt_records
+           (receipt_number, source_type, source_id, amount, method)
+         VALUES ($1,'shop',$2,$3,$4)`,
+        [`SHOP-${Date.now()}`, order.rows[0].id, subtotal - discountAmount, input.paymentMethod],
+      );
     }
 
     await client.query("COMMIT");
@@ -239,17 +245,78 @@ shopRouter.post("/orders", requireAuth, requirePermission("shop.manage"), async 
 
 shopRouter.post("/orders/:orderId/fulfill", requireAuth, requirePermission("shop.manage"), async (req, res, next) => {
   try {
+    const input = z.object({
+      carrier: z.string().trim().min(2).max(100).optional(),
+      trackingNumber: z.string().trim().max(100).optional(),
+    }).parse(req.body);
     const result = await db().query(
       `UPDATE shop_orders
-       SET status='fulfilled', updated_at=now()
+       SET status='fulfilled', updated_at=now(),
+           carrier=COALESCE($2, carrier),
+           tracking_number=COALESCE($3, tracking_number),
+           delivered_at=CASE WHEN fulfillment='pickup' THEN now() ELSE delivered_at END,
+           shipped_at=CASE WHEN fulfillment='delivery' THEN COALESCE(shipped_at, now()) ELSE shipped_at END
        WHERE id=$1 AND status='confirmed'
        RETURNING *`,
-      [req.params.orderId],
+      [req.params.orderId, input.carrier ?? null, input.trackingNumber ?? null],
     );
     if (!result.rowCount) {
       throw new ApiError(404, "Confirmed order not found", "ORDER_NOT_FOUND");
     }
+    await db().query(
+      "INSERT INTO shop_order_status_history (order_id,status,note,created_by) VALUES ($1,'fulfilled',$2,$3)",
+      [req.params.orderId, "Order fulfilled", req.auth?.id ?? null],
+    );
     res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+shopRouter.get("/orders", requireAuth, requirePermission("shop.manage"), async (req, res, next) => {
+  try {
+    const input = z.object({
+      status: z.enum(["pending", "confirmed", "fulfilled", "cancelled"]).optional(),
+      channel: z.enum(["counter", "online"]).optional(),
+    }).parse(req.query);
+    const result = await db().query(
+      `SELECT o.*,
+              COALESCE(json_agg(json_build_object(
+                'productId', oi.product_id, 'quantity', oi.quantity,
+                'unitPrice', oi.unit_price, 'lineTotal', oi.line_total
+              )) FILTER (WHERE oi.id IS NOT NULL), '[]'::json) AS items
+       FROM shop_orders o
+       LEFT JOIN shop_order_items oi ON oi.order_id=o.id
+       WHERE ($1::text IS NULL OR o.status=$1)
+         AND ($2::text IS NULL OR o.channel=$2)
+       GROUP BY o.id
+       ORDER BY o.created_at DESC
+       LIMIT 500`,
+      [input.status ?? null, input.channel ?? null],
+    );
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+shopRouter.post("/products/:productId/variants", requireAuth, requirePermission("shop.manage"), async (req, res, next) => {
+  try {
+    const input = z.object({
+      variantSku: z.string().trim().min(2).max(50),
+      name: z.string().trim().min(2).max(120),
+      stockQuantity: z.coerce.number().int().min(0).default(0),
+      priceOverride: z.coerce.number().min(0).optional(),
+      attributes: z.record(z.string(), z.unknown()).default({}),
+    }).parse(req.body);
+    const result = await db().query(
+      `INSERT INTO product_variants
+         (product_id, variant_sku, name, stock_quantity, price_override, attributes)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [req.params.productId, input.variantSku.toUpperCase(), input.name,
+       input.stockQuantity, input.priceOverride ?? null, JSON.stringify(input.attributes)],
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     next(error);
   }
@@ -286,6 +353,10 @@ shopRouter.post("/orders/:orderId/cancel", requireAuth, requirePermission("shop.
       [req.params.orderId],
     );
     await client.query("UPDATE shop_payments SET status='refunded' WHERE order_id=$1", [req.params.orderId]);
+    await client.query(
+      "INSERT INTO shop_order_status_history (order_id,status,note,created_by) VALUES ($1,'cancelled',$2,$3)",
+      [req.params.orderId, "Order cancelled and stock restored", req.auth?.id ?? null],
+    );
     await client.query("COMMIT");
     res.status(200).json({ success: true, data: { id: req.params.orderId, status: "cancelled" } });
   } catch (error) {

@@ -1,0 +1,165 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PlayPulse API",
+    "version": "1.0.0",
+    "description": "API-first sports club management platform."
+  },
+  "servers": [
+    { "url": "/api/v1", "description": "Version 1 API" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "SuccessResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "const": true },
+          "data": {}
+        },
+        "required": ["success", "data"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "const": false },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            },
+            "required": ["code", "message"]
+          }
+        },
+        "required": ["success", "error"]
+      }
+    }
+  },
+  "security": [],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Register a member account",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password", "fullName"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 12 },
+                  "fullName": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Member account created" },
+          "403": { "description": "Role assignment denied" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Authenticate and return access and refresh tokens",
+        "responses": { "200": { "description": "Authenticated" }, "401": { "description": "Invalid credentials" } }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Rotate a refresh token",
+        "responses": { "200": { "description": "Token pair returned" }, "401": { "description": "Invalid refresh token" } }
+      }
+    },
+    "/memberships/plans": {
+      "get": {
+        "tags": ["Memberships"],
+        "summary": "List active membership plans",
+        "responses": { "200": { "description": "Plans returned" } }
+      }
+    },
+    "/courts/availability": {
+      "get": {
+        "tags": ["Courts"],
+        "summary": "Query court availability and reservations",
+        "parameters": [
+          { "name": "date", "in": "query", "required": true, "schema": { "type": "string", "format": "date" } },
+          { "name": "courtId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "200": { "description": "Availability returned" } }
+      }
+    },
+    "/courts/reservations": {
+      "post": {
+        "tags": ["Courts"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Create a member, walk-in, or social reservation",
+        "parameters": [
+          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "201": { "description": "Reservation created" }, "409": { "description": "Conflict or daily limit reached" } }
+      }
+    },
+    "/shop/products": {
+      "get": { "tags": ["Shop"], "summary": "List public shop products", "responses": { "200": { "description": "Products returned" } } }
+    },
+    "/shop/orders": {
+      "post": {
+        "tags": ["Shop"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Create an atomic counter or online order",
+        "parameters": [
+          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "201": { "description": "Order created" }, "409": { "description": "Insufficient stock" } }
+      }
+    },
+    "/cafeteria/orders": {
+      "post": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Place a cafeteria or bar order",
+        "responses": { "201": { "description": "Order placed" } }
+      }
+    },
+    "/public/clubs/champions": {
+      "get": { "tags": ["Public"], "summary": "Get public club, sport, court, and membership information", "responses": { "200": { "description": "Club information returned" } } }
+    },
+    "/public/trials": {
+      "post": { "tags": ["Public"], "summary": "Request a trial session", "responses": { "201": { "description": "Trial enquiry created" } } }
+    },
+    "/invoices/{invoiceId}/payments": {
+      "post": {
+        "tags": ["Finance"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Apply a payment to a business invoice",
+        "parameters": [
+          { "name": "invoiceId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "201": { "description": "Payment applied" }, "409": { "description": "Overpayment" } }
+      }
+    },
+    "/invoices/aging": {
+      "get": { "tags": ["Finance"], "security": [{ "bearerAuth": [] }], "summary": "Get invoice aging report", "responses": { "200": { "description": "Aging data returned" } } }
+    },
+    "/reports/performance": {
+      "get": { "tags": ["Finance"], "security": [{ "bearerAuth": [] }], "summary": "Get court, shop, cafeteria, expense, and payroll performance", "responses": { "200": { "description": "Performance report returned" } } }
+    },
+    "/assistant/query": {
+      "post": { "tags": ["Assistant"], "security": [{ "bearerAuth": [] }], "summary": "Query the explainable club assistant", "responses": { "200": { "description": "Assistant recommendation returned" } } }
+    }
+  }
+}

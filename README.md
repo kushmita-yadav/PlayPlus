@@ -363,6 +363,12 @@ Apply migrations:
 npm.cmd run migrate
 ```
 
+Seed demonstration data after migrations:
+
+```powershell
+npm.cmd run db:seed
+```
+
 Start development mode:
 
 ```powershell
@@ -489,9 +495,44 @@ npm.cmd run quality
 npm.cmd run security:audit
 ```
 
+### Demo Data
+
+```powershell
+npm.cmd run db:seed
+```
+
+Seed credentials are only for local demonstration:
+
+- Admin: `admin@champions.local`
+- Member: `member@champions.local`
+- Password: `DemoPassword123!`
+
+### Database Backup and Restore
+
+`pg_dump` and `pg_restore` must be installed and available in `PATH`.
+
+```powershell
+npm.cmd run db:backup
+npm.cmd run db:restore -- backups/playpulse-2026-01-01T00-00-00.dump
+```
+
+The restore command uses `--clean --if-exists`. Verify and authorize the target database before restoring.
+
 ---
 
 ## API Guide
+
+Interactive API documentation is available at:
+
+```text
+/api/v1/docs/
+```
+
+The machine-readable OpenAPI 3.1 document is available at:
+
+```text
+/api/v1/openapi.json
+```
 
 All versioned application endpoints begin with `/api/v1`.
 
@@ -734,6 +775,9 @@ Examples of permissions include:
 ### Token Handling
 
 - JWTs expire after eight hours.
+- Refresh tokens rotate and can be revoked.
+- Accounts lock temporarily after repeated failed login attempts.
+- Password reset uses single-use, one-hour hashed tokens.
 - Tokens are verified for issuer and audience.
 - Invalid and expired tokens return `401`.
 - Missing authentication returns `401`.

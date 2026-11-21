@@ -13,6 +13,12 @@ import { shopRouter } from "./shop/routes.js";
 import { cafeteriaRouter } from "./cafeteria/routes.js";
 import { operationsRouter } from "./operations/routes.js";
 import { assistantRouter } from "./assistant/routes.js";
+import { hardeningRouter } from "./hardening/routes.js";
+import swaggerUi from "swagger-ui-express";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+const openapiDocument = JSON.parse(readFileSync(path.resolve(process.cwd(), "docs/openapi.json"), "utf8"));
 
 export function createApp() {
   const app = express();
@@ -75,6 +81,11 @@ export function createApp() {
   app.use("/api/v1/cafeteria", cafeteriaRouter);
   app.use("/api/v1", operationsRouter);
   app.use("/api/v1", assistantRouter);
+  app.use("/api/v1/docs", swaggerUi.serve, swaggerUi.setup(openapiDocument));
+  app.use("/api/v1/openapi.json", (_req: Request, res: Response) => {
+    res.status(200).json(openapiDocument);
+  });
+  app.use("/api/v1", hardeningRouter);
 
   app.use(notFound);
   app.use(errorHandler);

@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt, { type JwtPayload, type SignOptions } from "jsonwebtoken";
+import { createHash, randomBytes } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { env } from "../config/env.js";
@@ -55,7 +56,8 @@ export async function registerAccount(input: z.infer<typeof registerSchema>) {
 export async function authenticate(email: string, password: string): Promise<AuthUser> {
   if (!pool) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
   const result = await pool.query(
-    `SELECT a.id, a.email, a.full_name, a.password_hash, a.status, r.name AS role,
+    `SELECT a.id, a.email, a.full_name, a.password_hash, a.status,
+            a.failed_login_attempts, a.locked_until, r.name AS role,
             COALESCE(array_agg(p.code) FILTER (WHERE p.code IS NOT NULL), ARRAY[]::text[]) AS permissions
      FROM accounts a
      JOIN roles r ON r.id = a.role_id
@@ -68,9 +70,24 @@ export async function authenticate(email: string, password: string): Promise<Aut
   const account = result.rows[0];
   if (!account) throw new ApiError(401, "Invalid email or password", "INVALID_CREDENTIALS");
   if (account.status !== "active") throw new ApiError(403, "Account is inactive", "ACCOUNT_INACTIVE");
+  if (account.locked_until && new Date(account.locked_until) > new Date()) {
+    throw new ApiError(423, "Account is temporarily locked", "ACCOUNT_LOCKED");
+  }
 
   const valid = await bcrypt.compare(password, account.password_hash);
-  if (!valid) throw new ApiError(401, "Invalid email or password", "INVALID_CREDENTIALS");
+  if (!valid) {
+    const attempts = Number(account.failed_login_attempts) + 1;
+    if (attempts >= 5) {
+      await pool.query(
+        "UPDATE accounts SET failed_login_attempts=$2, locked_until=now()+interval '15 minutes' WHERE id=$1",
+        [account.id, attempts],
+      );
+      throw new ApiError(423, "Account locked after repeated failed login attempts", "ACCOUNT_LOCKED");
+    }
+    await pool.query("UPDATE accounts SET failed_login_attempts=$2 WHERE id=$1", [account.id, attempts]);
+    throw new ApiError(401, "Invalid email or password", "INVALID_CREDENTIALS");
+  }
+  await pool.query("UPDATE accounts SET failed_login_attempts=0, locked_until=NULL, updated_at=now() WHERE id=$1", [account.id]);
 
   return {
     id: account.id,
@@ -89,6 +106,21 @@ export function signToken(user: AuthUser): string {
     role: user.role,
     permissions: user.permissions,
   }, secret(), options);
+}
+
+export function hashSecurityToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export async function issueRefreshToken(userId: string): Promise<string> {
+  if (!pool) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
+  const token = randomBytes(32).toString("hex");
+  await pool.query(
+    `INSERT INTO refresh_tokens (account_id, token_hash, expires_at)
+     VALUES ($1,$2,now()+interval '30 days')`,
+    [userId, hashSecurityToken(token)],
+  );
+  return token;
 }
 
 export function requireAuth(req: Request, _res: Response, next: NextFunction): void {

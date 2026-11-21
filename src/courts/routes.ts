@@ -257,6 +257,12 @@ courtRouter.post("/reservations", requireAuth, requirePermission("courts.manage"
         );
       }
     }
+    await client.query(
+      `INSERT INTO receipt_records
+         (receipt_number, source_type, source_id, amount, method)
+       VALUES ($1,'court',$2,$3,'online')`,
+      [`COURT-${Date.now()}`, reservationId, baseAmount - discountAmount],
+    );
     await client.query("COMMIT");
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {

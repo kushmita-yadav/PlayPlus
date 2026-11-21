@@ -17,6 +17,7 @@ const orderSchema = z.object({
   tableId: z.string().uuid().optional(),
   memberId: z.string().uuid().optional(),
   guestName: z.string().trim().min(2).max(120).optional(),
+  notes: z.string().trim().max(500).optional(),
   items: z.array(z.object({
     menuItemId: z.string().uuid(),
     quantity: z.coerce.number().int().min(1).max(100),
@@ -55,6 +56,42 @@ cafeteriaRouter.post("/menu", requireAuth, requirePermission("bar.manage"), asyn
 cafeteriaRouter.get("/tables", requireAuth, requirePermission("bar.manage"), async (_req, res, next) => {
   try {
     const result = await db().query("SELECT * FROM cafeteria_tables ORDER BY table_number");
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+cafeteriaRouter.patch("/tables/:tableId/status", requireAuth, requirePermission("bar.manage"), async (req, res, next) => {
+  try {
+    const input = z.object({
+      status: z.enum(["available", "occupied", "reserved"]),
+    }).parse(req.body);
+    const result = await db().query(
+      "UPDATE cafeteria_tables SET status=$2 WHERE id=$1 RETURNING *",
+      [req.params.tableId, input.status],
+    );
+    if (!result.rowCount) throw new ApiError(404, "Table not found", "TABLE_NOT_FOUND");
+    res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+cafeteriaRouter.get("/kitchen/queue", requireAuth, requirePermission("bar.manage"), async (_req, res, next) => {
+  try {
+    const result = await db().query(
+      `SELECT o.id, o.order_number, o.status, o.notes, o.created_at,
+              COALESCE(json_agg(json_build_object(
+                'name', mi.name, 'quantity', oi.quantity
+              )) FILTER (WHERE oi.id IS NOT NULL), '[]'::json) AS items
+       FROM cafeteria_orders o
+       LEFT JOIN cafeteria_order_items oi ON oi.order_id=o.id
+       LEFT JOIN cafeteria_menu_items mi ON mi.id=oi.menu_item_id
+       WHERE o.status IN ('placed','preparing','ready')
+       GROUP BY o.id
+       ORDER BY o.created_at`,
+    );
     res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     next(error);
@@ -162,12 +199,12 @@ cafeteriaRouter.post("/orders", requireAuth, requirePermission("bar.manage"), as
     const order = await client.query(
       `INSERT INTO cafeteria_orders
          (order_number, tab_id, table_id, member_id, guest_name, status,
-          subtotal, discount_amount, total_amount, idempotency_key, created_by)
-       VALUES ($1,$2,$3,$4,$5,'placed',$6,$7,$8,$9,$10)
+            subtotal, discount_amount, total_amount, idempotency_key, created_by, notes)
+         VALUES ($1,$2,$3,$4,$5,'placed',$6,$7,$8,$9,$10,$11,$12)
        RETURNING *`,
       [orderNumber, input.tabId ?? null, input.tableId ?? null, input.memberId ?? null,
        input.guestName ?? null, subtotal, discountAmount, subtotal - discountAmount,
-       idempotencyKey ?? null, req.auth?.id ?? null],
+       idempotencyKey ?? null, req.auth?.id ?? null, input.notes ?? null],
     );
     for (const item of items) {
       await client.query(
@@ -236,6 +273,10 @@ cafeteriaRouter.post("/tabs/:tabId/settle", requireAuth, requirePermission("bar.
     if (!client) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
     const input = z.object({
       method: z.enum(["cash", "card", "upi"]),
+      payments: z.array(z.object({
+        method: z.enum(["cash", "card", "upi"]),
+        amount: z.coerce.number().positive(),
+      })).max(10).optional(),
     }).parse(req.body);
     const idempotencyKey = req.header("idempotency-key");
     await client.query("BEGIN");
@@ -251,12 +292,31 @@ cafeteriaRouter.post("/tabs/:tabId/settle", requireAuth, requirePermission("bar.
       [req.params.tabId],
     );
     const amount = Number(balance.rows[0].balance);
-    await client.query(
-      `INSERT INTO cafeteria_payments (tab_id, amount, method, status, idempotency_key)
-       VALUES ($1,$2,$3,'recorded',$4)`,
-      [req.params.tabId, amount, input.method,
-       idempotencyKey ?? null],
-    );
+    if (input.payments) {
+      const splitTotal = input.payments.reduce((sum, payment) => sum + payment.amount, 0);
+      if (Math.abs(splitTotal - amount) > 0.01) {
+        throw new ApiError(409, "Split payments must equal the tab balance", "INVALID_SPLIT_TOTAL");
+      }
+      for (const [index, payment] of input.payments.entries()) {
+        await client.query(
+          `INSERT INTO cafeteria_payments (tab_id, amount, method, status, idempotency_key)
+           VALUES ($1,$2,$3,'recorded',$4)`,
+          [req.params.tabId, payment.amount, payment.method,
+           idempotencyKey ? `${idempotencyKey}:${index}` : null],
+        );
+      }
+      await client.query(
+        "UPDATE customer_tabs SET split_method=$2 WHERE id=$1",
+        [req.params.tabId, JSON.stringify(input.payments)],
+      );
+    } else {
+      await client.query(
+        `INSERT INTO cafeteria_payments (tab_id, amount, method, status, idempotency_key)
+         VALUES ($1,$2,$3,'recorded',$4)`,
+        [req.params.tabId, amount, input.method,
+         idempotencyKey ?? null],
+      );
+    }
     await client.query(
       "UPDATE customer_tabs SET status='settled', settled_at=now() WHERE id=$1",
       [req.params.tabId],
@@ -264,6 +324,12 @@ cafeteriaRouter.post("/tabs/:tabId/settle", requireAuth, requirePermission("bar.
     if (tab.rows[0].table_id) {
       await client.query("UPDATE cafeteria_tables SET status='available' WHERE id=$1", [tab.rows[0].table_id]);
     }
+    await client.query(
+      `INSERT INTO receipt_records
+         (receipt_number, source_type, source_id, amount, method)
+       VALUES ($1,'cafeteria',$2,$3,$4)`,
+      [`BAR-${Date.now()}`, req.params.tabId, amount, input.method],
+    );
     await client.query("COMMIT");
     res.status(200).json({
       success: true,

@@ -22,3 +22,5 @@ services:
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      - key: DATABASE_SSL
+        value: "true"

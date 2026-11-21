@@ -161,3 +161,20 @@ test("sales migrations include idempotency and stock-safe records", async () => 
   assert.match(shopSql, /uq_shop_payment_idempotency/);
   assert.match(shopSql, /stock_quantity integer NOT NULL DEFAULT 0 CHECK \(stock_quantity >= 0\)/);
 });
+
+test("OpenAPI document describes PlayPulse versioned API", async () => {
+  const document = JSON.parse(await readFile("docs/openapi.json", "utf8"));
+  assert.equal(document.openapi, "3.1.0");
+  assert.equal(document.info.title, "PlayPulse API");
+  assert.ok(document.paths["/courts/reservations"]);
+  assert.ok(document.components.securitySchemes.bearerAuth);
+});
+
+test("hardening migration contains lockout and double-entry safeguards", async () => {
+  const sql = await readFile("migrations/009_operations_hardening.sql", "utf8");
+  assert.match(sql, /failed_login_attempts/);
+  assert.match(sql, /refresh_tokens/);
+  assert.match(sql, /ledger_entries/);
+  assert.match(sql, /uq_staff_shift_no_overlap/);
+  assert.match(sql, /invoice_payments/);
+});

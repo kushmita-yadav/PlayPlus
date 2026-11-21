@@ -157,10 +157,11 @@ operationsRouter.post("/staff/:staffId/shifts", requireAuth, requirePermission("
       startsAt: z.string().datetime(),
       endsAt: z.string().datetime(),
       role: z.string().trim().min(2).max(80),
+      breakMinutes: z.coerce.number().int().min(0).max(480).default(0),
     }).parse(req.body);
     const result = await db().query(
-      "INSERT INTO staff_shifts (staff_id, starts_at, ends_at, role) VALUES ($1,$2,$3,$4) RETURNING *",
-      [req.params.staffId, input.startsAt, input.endsAt, input.role],
+      "INSERT INTO staff_shifts (staff_id, starts_at, ends_at, role, break_minutes) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+      [req.params.staffId, input.startsAt, input.endsAt, input.role, input.breakMinutes],
     );
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
@@ -186,16 +187,68 @@ operationsRouter.post("/staff/:staffId/leave", requireAuth, async (req, res, nex
 });
 
 operationsRouter.patch("/leave/:leaveId", requireAuth, requirePermission("staff.manage"), async (req, res, next) => {
+  const client = pool ? await pool.connect() : null;
   try {
+    if (!client) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
     const input = z.object({ status: z.enum(["approved", "rejected"]) }).parse(req.body);
-    const result = await db().query(
+    await client.query("BEGIN");
+    const request = await client.query(
+      "SELECT * FROM leave_requests WHERE id=$1 AND status='pending' FOR UPDATE",
+      [req.params.leaveId],
+    );
+    if (!request.rowCount) throw new ApiError(404, "Pending leave request not found", "LEAVE_NOT_FOUND");
+    const result = await client.query(
       `UPDATE leave_requests
        SET status=$2, reviewed_by=$3, reviewed_at=now()
        WHERE id=$1 AND status='pending' RETURNING *`,
       [req.params.leaveId, input.status, req.auth?.id ?? null],
     );
-    if (!result.rowCount) throw new ApiError(404, "Pending leave request not found", "LEAVE_NOT_FOUND");
+    if (input.status === "approved") {
+      const start = new Date(request.rows[0].starts_at);
+      const end = new Date(request.rows[0].ends_at);
+      const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+      await client.query(
+        "UPDATE staff_profiles SET used_leave_days=used_leave_days+$2 WHERE id=$1",
+        [request.rows[0].staff_id, days],
+      );
+    }
+    await client.query("COMMIT");
     res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    await client?.query("ROLLBACK");
+    next(error);
+  } finally {
+    client?.release();
+  }
+});
+
+operationsRouter.get("/staff/:staffId/leave/balance", requireAuth, async (req, res, next) => {
+  try {
+    const result = await db().query(
+      `SELECT employee_number, annual_leave_days, used_leave_days,
+              annual_leave_days-used_leave_days AS remaining_leave_days
+       FROM staff_profiles WHERE id=$1`,
+      [req.params.staffId],
+    );
+    if (!result.rowCount) throw new ApiError(404, "Staff profile not found", "STAFF_NOT_FOUND");
+    res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+operationsRouter.get("/staff/departments/report", requireAuth, requirePermission("staff.manage"), async (_req, res, next) => {
+  try {
+    const result = await db().query(
+      `SELECT department,
+              count(*)::int AS staff_count,
+              count(*) FILTER (WHERE status='active')::int AS active_staff,
+              COALESCE(sum(base_salary),0)::numeric AS base_salary_total
+       FROM staff_profiles
+       GROUP BY department
+       ORDER BY department`,
+    );
+    res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     next(error);
   }
@@ -236,13 +289,25 @@ operationsRouter.post("/invoices", requireAuth, requirePermission("finance.manag
       dueAt: z.string().date().optional(),
     }).parse(req.body);
     const subtotal = input.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    let taxAmount = input.taxAmount;
+    if (taxAmount === 0) {
+      const activeTax = await db().query(
+        `SELECT rate_percent FROM tax_rates
+         WHERE is_active=true AND applies_from<=CURRENT_DATE
+           AND (applies_until IS NULL OR applies_until>=CURRENT_DATE)
+         ORDER BY applies_from DESC LIMIT 1`,
+      );
+      if (activeTax.rowCount) {
+        taxAmount = subtotal * Number(activeTax.rows[0].rate_percent) / 100;
+      }
+    }
     const invoiceNumber = `INV-${Date.now()}`;
     const result = await db().query(
       `INSERT INTO invoices
          (invoice_number, business_name, billing_email, subtotal, tax_amount, total_amount, due_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [invoiceNumber, input.businessName, input.billingEmail ?? null,
-       subtotal, input.taxAmount, subtotal + input.taxAmount, input.dueAt ?? null],
+       subtotal, taxAmount, subtotal + taxAmount, input.dueAt ?? null],
     );
     for (const item of input.items) {
       await db().query(
