@@ -9,7 +9,7 @@
     "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "tsx --test test/*.test.ts",
     "lint": "eslint src test --max-warnings=0",
     "migrate": "tsx src/database/migrate.ts",
     "migrate:deploy": "node dist/src/database/migrate.js",
