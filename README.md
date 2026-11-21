@@ -631,6 +631,17 @@ All versioned application endpoints begin with `/api/v1`.
 | GET | `/api/v1/assistant/cancellation-recovery/:reservationId` | Yes | Find alternative courts |
 | POST | `/api/v1/assistant/confirm` | Yes | Confirm and audit an action |
 
+Additional operational endpoints include:
+
+- `GET /metrics`
+- `GET /api/v1/reports/export`
+- `GET /api/v1/notifications`
+- `POST /api/v1/notifications`
+- `POST /api/v1/notifications/process`
+- `POST /api/v1/notifications/generate-reminders`
+- `POST /api/v1/observability/slow-queries`
+- `GET /api/v1/observability/backups`
+
 ---
 
 ## Example API Requests

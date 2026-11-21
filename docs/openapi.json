@@ -160,6 +160,30 @@
     },
     "/assistant/query": {
       "post": { "tags": ["Assistant"], "security": [{ "bearerAuth": [] }], "summary": "Query the explainable club assistant", "responses": { "200": { "description": "Assistant recommendation returned" } } }
+    },
+    "/metrics": {
+      "get": { "tags": ["Monitoring"], "summary": "Prometheus-compatible application metrics", "responses": { "200": { "description": "Metrics returned" } } }
+    },
+    "/reports/export": {
+      "get": {
+        "tags": ["Reporting"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Export performance, invoice, or tax reports as CSV, XLSX, or PDF",
+        "parameters": [
+          { "name": "format", "in": "query", "required": true, "schema": { "type": "string", "enum": ["csv", "xlsx", "pdf"] } },
+          { "name": "from", "in": "query", "required": true, "schema": { "type": "string", "format": "date" } },
+          { "name": "to", "in": "query", "required": true, "schema": { "type": "string", "format": "date" } },
+          { "name": "report", "in": "query", "required": false, "schema": { "type": "string", "enum": ["performance", "invoices", "tax"] } }
+        ],
+        "responses": { "200": { "description": "Report file returned" } }
+      }
+    },
+    "/notifications": {
+      "get": { "tags": ["Notifications"], "security": [{ "bearerAuth": [] }], "summary": "List notification outbox entries", "responses": { "200": { "description": "Notifications returned" } } },
+      "post": { "tags": ["Notifications"], "security": [{ "bearerAuth": [] }], "summary": "Queue an email, SMS, or in-app notification", "responses": { "201": { "description": "Notification queued" } } }
+    },
+    "/notifications/process": {
+      "post": { "tags": ["Notifications"], "security": [{ "bearerAuth": [] }], "summary": "Process pending notifications", "responses": { "202": { "description": "Processing result returned" } } }
     }
   }
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../database/pool.js";
 import { requireAuth, requirePermission } from "../auth/auth.js";
 import { ApiError } from "../middleware/errors.js";
+import { enqueueNotification } from "../notifications/outbox.js";
 
 export const courtRouter = Router();
 export function validateBookingStart(start: Date): boolean {
@@ -264,6 +265,26 @@ courtRouter.post("/reservations", requireAuth, requirePermission("courts.manage"
       [`COURT-${Date.now()}`, reservationId, baseAmount - discountAmount],
     );
     await client.query("COMMIT");
+    if (input.memberId) {
+      await enqueueNotification({
+        recipientType: "member",
+        recipientId: input.memberId,
+        channel: "email",
+        eventType: "booking_confirmed",
+        subject: "Court booking confirmed",
+        body: `Your court booking is confirmed for ${start.toISOString()}.`,
+      });
+    }
+    if (input.memberId) {
+      await enqueueNotification({
+        recipientType: "member",
+        recipientId: input.memberId,
+        channel: "email",
+        eventType: "booking_confirmed",
+        subject: "Court booking confirmed",
+        body: `Your court booking is confirmed for ${start.toISOString()}.`,
+      });
+    }
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     await client?.query("ROLLBACK");
@@ -288,6 +309,16 @@ courtRouter.post("/reservations/:reservationId/cancel", requireAuth, requirePerm
       [req.params.reservationId, input.reason ?? null],
     );
     if (!result.rowCount) throw new ApiError(404, "Active reservation not found", "RESERVATION_NOT_FOUND");
+    if (result.rows[0].member_id) {
+      await enqueueNotification({
+        recipientType: "member",
+        recipientId: result.rows[0].member_id,
+        channel: "email",
+        eventType: "booking_cancelled",
+        subject: "Court booking cancelled",
+        body: `Your court booking for ${new Date(result.rows[0].starts_at).toISOString()} was cancelled.`,
+      });
+    }
     res.status(200).json({ success: true, data: result.rows[0] });
   } catch (error) {
     next(error);

@@ -178,3 +178,19 @@ test("hardening migration contains lockout and double-entry safeguards", async (
   assert.match(sql, /uq_staff_shift_no_overlap/);
   assert.match(sql, /invoice_payments/);
 });
+
+test("Prometheus metrics endpoint exposes counters", async () => {
+  const response = await request(app).get("/metrics").expect(200);
+  assert.match(response.text, /playpulse_http_requests_total/);
+  assert.match(response.text, /playpulse_http_requests_failed_total/);
+});
+
+test("protected report export rejects missing authentication", async () => {
+  await request(app)
+    .get("/api/v1/reports/export?format=csv&from=2026-11-01&to=2026-11-30")
+    .expect(401);
+});
+
+test("notification processing rejects missing authentication", async () => {
+  await request(app).post("/api/v1/notifications/process").send({}).expect(401);
+});

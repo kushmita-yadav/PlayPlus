@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../database/pool.js";
 import { requireAuth, requirePermission } from "../auth/auth.js";
 import { ApiError } from "../middleware/errors.js";
+import { enqueueNotification } from "../notifications/outbox.js";
 
 export const shopRouter = Router();
 
@@ -234,6 +235,16 @@ shopRouter.post("/orders", requireAuth, requirePermission("shop.manage"), async 
     }
 
     await client.query("COMMIT");
+    if (input.memberId) {
+      await enqueueNotification({
+        recipientType: "member",
+        recipientId: input.memberId,
+        channel: "email",
+        eventType: "payment_receipt",
+        subject: "Your shop purchase receipt",
+        body: `Your shop order ${order.rows[0].order_number} was confirmed for ${subtotal - discountAmount}.`,
+      });
+    }
     res.status(201).json({ success: true, data: order.rows[0] });
   } catch (error) {
     await client?.query("ROLLBACK");

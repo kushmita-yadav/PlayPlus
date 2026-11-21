@@ -14,6 +14,8 @@ import { cafeteriaRouter } from "./cafeteria/routes.js";
 import { operationsRouter } from "./operations/routes.js";
 import { assistantRouter } from "./assistant/routes.js";
 import { hardeningRouter } from "./hardening/routes.js";
+import { monitoringRouter, recordRequest, recordDatabaseLatency, prometheusMetricsText } from "./monitoring/routes.js";
+import { notificationRouter } from "./notifications/routes.js";
 import swaggerUi from "swagger-ui-express";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -43,6 +45,12 @@ export function createApp() {
     res.setHeader("x-request-id", requestId);
     next();
   });
+  app.use((req, res, next) => {
+    res.on("finish", () => {
+      recordRequest(res.statusCode < 400);
+    });
+    next();
+  });
 
   app.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({
@@ -53,8 +61,14 @@ export function createApp() {
     });
   });
 
+  app.get("/metrics", (_req: Request, res: Response) => {
+    res.setHeader("Content-Type", "text/plain; version=0.0.4");
+    res.status(200).send(prometheusMetricsText());
+  });
+
   app.get("/ready", async (_req: Request, res: Response) => {
     const database = await checkDatabase();
+    recordDatabaseLatency(database.latencyMs ?? 0);
     res.status(database.ok ? 200 : 503).json({
       status: database.ok ? "ready" : "not-ready",
       database,
@@ -86,6 +100,8 @@ export function createApp() {
     res.status(200).json(openapiDocument);
   });
   app.use("/api/v1", hardeningRouter);
+  app.use("/api/v1", monitoringRouter);
+  app.use("/api/v1", notificationRouter);
 
   app.use(notFound);
   app.use(errorHandler);
