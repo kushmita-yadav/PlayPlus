@@ -1,16 +1,17 @@
 databases:
   - name: playpulse-db
     databaseName: playpulse
-    plan: free
+    plan: 0.5c-1g
 
 services:
   - type: web
     name: playpulse-api
     runtime: node
-    plan: free
+    plan: 0.5c-512mb
     buildCommand: npm ci && npm run build
-    startCommand: npm run migrate:deploy && npm start
-    healthCheckPath: /health
+    preDeployCommand: npm run migrate:deploy
+    startCommand: npm start
+    healthCheckPath: /ready
     envVars:
       - key: NODE_ENV
         value: production
@@ -24,3 +25,5 @@ services:
         generateValue: true
       - key: DATABASE_SSL
         value: "true"
+      - key: DATABASE_SSL_REJECT_UNAUTHORIZED
+        value: "false"

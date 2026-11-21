@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt, { type JwtPayload, type SignOptions } from "jsonwebtoken";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { env } from "../config/env.js";
@@ -32,25 +32,74 @@ export const registerSchema = z.object({
   email: z.string().email().max(254),
   password: z.string().min(12).max(128),
   fullName: z.string().trim().min(2).max(120),
+  phone: z.string().trim().min(7).max(20),
+  dateOfBirth: z.string().date().optional(),
   role: z.enum(["member", "front_desk", "staff", "manager", "admin"]).optional().default("member"),
 });
 
-export async function registerAccount(input: z.infer<typeof registerSchema>) {
+export type AccountInput = {
+  email: string;
+  password: string;
+  fullName: string;
+  role: "member" | "front_desk" | "staff" | "manager" | "admin";
+  phone?: string;
+  dateOfBirth?: string;
+};
+
+export async function registerAccount(input: AccountInput) {
   if (!pool) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
 
-  const existing = await pool.query("SELECT id FROM accounts WHERE lower(email) = lower($1)", [input.email]);
-  if (existing.rowCount) throw new ApiError(409, "Email is already registered", "EMAIL_EXISTS");
-
   const passwordHash = await bcrypt.hash(input.password, 12);
-  const result = await pool.query(
-    `INSERT INTO accounts (email, password_hash, full_name, role_id)
-     SELECT $1, $2, $3, r.id FROM roles r WHERE r.name = $4
-     RETURNING id, email, full_name`,
-    [input.email.toLowerCase(), passwordHash, input.fullName, input.role],
-  );
-  if (!result.rowCount) throw new ApiError(500, "Account role could not be assigned", "ROLE_MISSING");
-  const account = result.rows[0];
-  return { id: account.id, email: account.email, fullName: account.full_name, role: input.role };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query(
+      "SELECT id FROM accounts WHERE lower(email)=lower($1) FOR UPDATE",
+      [input.email],
+    );
+    if (existing.rowCount) throw new ApiError(409, "Email is already registered", "EMAIL_EXISTS");
+
+    const result = await client.query(
+      `INSERT INTO accounts (email, password_hash, full_name, role_id)
+       SELECT lower($1), $2, $3, r.id FROM roles r WHERE r.name = $4
+       RETURNING id, email, full_name`,
+      [input.email, passwordHash, input.fullName, input.role],
+    );
+    if (!result.rowCount) throw new ApiError(500, "Account role could not be assigned", "ROLE_MISSING");
+    const account = result.rows[0];
+    if (input.role === "member") {
+      const existingMember = await client.query(
+        `SELECT id FROM members
+         WHERE lower(email)=lower($1) AND account_id IS NULL
+         ORDER BY created_at
+         LIMIT 1
+         FOR UPDATE`,
+        [input.email],
+      );
+      if (existingMember.rowCount) {
+        await client.query(
+          "UPDATE members SET account_id=$2, updated_at=now() WHERE id=$1",
+          [existingMember.rows[0].id, account.id],
+        );
+      } else {
+        if (!input.phone) throw new ApiError(400, "A phone number is required to create a member profile", "PHONE_REQUIRED");
+        const memberNumber = `CC-${new Date().getUTCFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
+        await client.query(
+          `INSERT INTO members
+             (account_id, member_number, full_name, phone, email, date_of_birth)
+           VALUES ($1,$2,$3,$4,lower($5),$6)`,
+          [account.id, memberNumber, input.fullName, input.phone, input.email, input.dateOfBirth ?? null],
+        );
+      }
+    }
+    await client.query("COMMIT");
+    return { id: account.id, email: account.email, fullName: account.full_name, role: input.role };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function authenticate(email: string, password: string): Promise<AuthUser> {
@@ -150,9 +199,15 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
 }
 
 export function requirePermission(permission: string) {
+  const administratorOnlyPermissions = new Set([
+    "auth.admin", "finance.manage", "membership_plans.manage", "courts.configure",
+    "shop.catalog", "staff.provision", "payroll.manage",
+  ]);
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.auth) {
       next(new ApiError(401, "Bearer authentication required", "UNAUTHORIZED"));
+    } else if (req.auth.role === "manager" && administratorOnlyPermissions.has(permission)) {
+      next(new ApiError(403, "Administrator access is required", "FORBIDDEN"));
     } else if (req.auth.role !== "admin" && !req.auth.permissions.includes(permission)) {
       next(new ApiError(403, "Permission denied", "FORBIDDEN"));
     } else {
@@ -214,7 +269,7 @@ export function createUiSession(role: string, name: string, email: string): stri
     exp: Date.now() + 8 * 60 * 60 * 1000,
   })).toString("base64url");
   const signature = createHash("sha256")
-    .update(`${payload}.${env.JWT_SECRET ?? "playpulse-local-ui-secret"}`)
+    .update(`${payload}.${secret()}`)
     .digest("base64url");
   return `${payload}.${signature}`;
 }
@@ -225,12 +280,12 @@ export function readUiSession(cookieValue: string | undefined): {
   email: string;
   exp: number;
 } | null {
-  if (!cookieValue) return null;
+  if (!cookieValue || !env.JWT_SECRET) return null;
   const parts = cookieValue.split(".");
   if (parts.length !== 2) return null;
   const [payload, suppliedSignature] = parts;
   const expectedSignature = createHash("sha256")
-    .update(`${payload}.${env.JWT_SECRET ?? "playpulse-local-ui-secret"}`)
+    .update(`${payload}.${env.JWT_SECRET}`)
     .digest("base64url");
   if (suppliedSignature !== expectedSignature) return null;
   try {

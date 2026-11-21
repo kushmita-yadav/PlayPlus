@@ -5,13 +5,14 @@ import { readFile } from "node:fs/promises";
 import { createApp } from "../src/app.js";
 import { env } from "../src/config/env.js";
 import { createUiSession, signToken } from "../src/auth/auth.js";
+import { pool } from "../src/database/pool.js";
 import { validateBookingStart } from "../src/courts/routes.js";
 import { firstAvailableBookingTime, isSlotBooked } from "../frontend/src/lib/booking.js";
 import type { AuthUser } from "../src/auth/auth.js";
 
 const app = createApp();
 
-test("sample frontend homepage is served", async () => {
+test("public landing page is served", async () => {
   const response = await request(app).get("/").expect(200);
   assert.match(response.headers["content-type"], /text\/html/);
   assert.match(response.text, /PlayPulse/);
@@ -29,69 +30,74 @@ test("sample frontend assets are served", async () => {
   const script = await request(app).get(scriptPath).expect(200);
   assert.match(script.headers["content-type"], /javascript/);
   assert.ok(script.text.length > 0);
+  const illustration = await request(app).get("/court-illustration.svg").expect(200);
+  assert.match(illustration.headers["content-type"], /image\/svg\+xml/);
+  assert.match(illustration.body.toString("utf8"), /viewBox="0 0 460 270"/);
 });
 
 test("login page serves the React application root", async () => {
-  const response = await request(app).get("/").expect(200);
+  const response = await request(app).get("/login").expect(200);
   assert.match(response.text, /PlayPulse/);
   assert.match(response.text, /id="root"/);
 });
 
-test("admin, member, and visitor pages are served", async () => {
-  await request(app).get("/admin").expect(302);
-  const adminAgent = request.agent(app);
-  await adminAgent.post("/api/v1/auth/demo-login").send({
-    email: "admin@champions.club",
-    password: "Admin@123",
-    role: "admin",
-  }).expect(200);
-  const admin = await adminAgent.get("/admin").expect(200);
-  assert.equal(admin.headers["cache-control"], "no-store");
-  assert.match(admin.text, /type="module" crossorigin src="\/assets\//);
+test("staff route requires a real account and visitor pages remain public", async () => {
+  const admin = await request(app).get("/admin").expect(302);
+  assert.equal(admin.headers.location, "/");
   const portal = await request(app).get("/portal").expect(200);
   assert.equal(portal.headers["cache-control"], "no-store");
   const visitor = await request(app).get("/visitor").expect(200);
   assert.equal(visitor.headers["cache-control"], "no-store");
 });
 
-test("demo-session endpoint reports the HttpOnly UI session without exposing its cookie", async () => {
-  const agent = request.agent(app);
-  await agent.post("/api/v1/auth/demo-login").send({
-    email: "member@champions.club",
-    password: "Member@123",
-    role: "member",
-  }).expect(200);
-  const response = await agent.get("/api/v1/auth/demo-session").expect(200);
-  assert.equal(response.body.data.role, "member");
-  assert.equal(response.body.data.email, "member@champions.club");
-  assert.equal(response.headers["cache-control"], "no-store");
-});
-
-test("demo role login creates isolated role cookies", async () => {
-  const member = await request(app).post("/api/v1/auth/demo-login").send({
-    email: "member@champions.club",
-    password: "Member@123",
-    role: "member",
-  }).expect(200);
-  assert.match(member.headers["set-cookie"][0], /playpulse_ui=/);
-  assert.match(member.headers["set-cookie"][0], /HttpOnly/);
-  assert.equal(member.body.data.role, "member");
-
-  const admin = await request(app).post("/api/v1/auth/demo-login").send({
+test("demo credential login endpoint is not available", async () => {
+  await request(app).post("/api/v1/auth/demo-login").send({
     email: "admin@champions.club",
     password: "Admin@123",
     role: "admin",
-  }).expect(200);
-  assert.equal(admin.body.data.role, "admin");
-
-  await request(app).post("/api/v1/auth/demo-login").send({
-    email: "member@champions.club",
-    password: "wrong-password",
-    role: "member",
-  }).expect(401);
+  }).expect(404);
 });
 
-test("member portal requires a member demo session", async () => {
+test("member registration requires a phone number for a real member profile", async () => {
+  await request(app).post("/api/v1/auth/register").send({
+    email: "member@example.com",
+    password: "A-long-safe-password",
+    fullName: "Test Member",
+  }).expect(400);
+});
+
+  test("account provisioning requires an authenticated administrator", async () => {
+    await request(app).post("/api/v1/auth/accounts").send({
+      email: "staff@example.com",
+      password: "A-long-safe-password",
+      fullName: "Test Staff",
+      role: "staff",
+    }).expect(401);
+  });
+
+test("manager tokens cannot use administrator-only endpoints, even with stale permission claims", async () => {
+  env.JWT_SECRET = "a-test-secret-at-least-thirty-two-characters";
+  const token = signToken({
+    id: "00000000-0000-4000-8000-000000000002",
+    email: "manager@example.com",
+    fullName: "Test Manager",
+    role: "manager",
+    permissions: [
+      "auth.admin", "finance.manage", "membership_plans.manage", "courts.configure",
+      "shop.catalog", "staff.provision", "payroll.manage",
+    ],
+  });
+  const auth = { Authorization: `Bearer ${token}` };
+  await request(app).post("/api/v1/auth/accounts").set(auth).send({}).expect(403);
+  await request(app).post("/api/v1/expenses").set(auth).send({}).expect(403);
+  await request(app).post("/api/v1/memberships/plans").set(auth).send({}).expect(403);
+  await request(app).post("/api/v1/courts").set(auth).send({}).expect(403);
+  await request(app).post("/api/v1/shop/products").set(auth).send({}).expect(403);
+  await request(app).post("/api/v1/staff").set(auth).send({}).expect(403);
+  await request(app).post("/api/v1/payroll").set(auth).send({}).expect(403);
+});
+
+  test("member portal requires a member account session", async () => {
   await request(app).get("/portal?mode=member").expect(302);
 });
 
@@ -195,11 +201,15 @@ test("cafeteria order placement rejects missing authentication", async () => {
 });
 
 test("public enquiry creation is available", async () => {
-  await request(app).post("/api/v1/public/enquiries").send({
+  const response = await request(app).post("/api/v1/public/enquiries").send({
     name: "Test Visitor",
     phone: "9876543210",
     interest: "Trial session",
-  }).expect([201, 503]);
+  });
+  if (response.status === 201 && pool) {
+    await pool.query("DELETE FROM enquiries WHERE id=$1", [response.body.data.id]);
+  }
+  assert.ok([201, 503].includes(response.status));
 });
 
 test("quotation and leave operations require authorization", async () => {
@@ -256,6 +266,15 @@ test("booking migration includes database overlap protection", async () => {
   assert.match(sql, /booking_period WITH &&/);
 });
 
+test("new databases do not receive invented club prices, plans, courts, or tax rates", async () => {
+  const membershipSql = await readFile("migrations/003_memberships.sql", "utf8");
+  const courtsSql = await readFile("migrations/004_courts.sql", "utf8");
+  const financeSql = await readFile("migrations/009_operations_hardening.sql", "utf8");
+  assert.doesNotMatch(membershipSql, /INSERT INTO membership_plans/i);
+  assert.doesNotMatch(courtsSql, /INSERT INTO courts/i);
+  assert.doesNotMatch(financeSql, /INSERT INTO tax_rates/i);
+});
+
 test("sales migrations include idempotency and stock-safe records", async () => {
   const shopSql = await readFile("migrations/005_shop_inventory.sql", "utf8");
   assert.match(shopSql, /uq_shop_order_idempotency/);
@@ -296,13 +315,22 @@ test("notification processing rejects missing authentication", async () => {
   await request(app).post("/api/v1/notifications/process").send({}).expect(401);
 });
 
-test("shared demo data is restricted to signed-in staff sessions", async () => {
+test("nonstaff sessions cannot read shared club records", async () => {
   await request(app).get("/api/v1/demo-data").expect(401);
   await request(app).get("/api/v1/demo-data/events").expect(401);
   const visitorSession = createUiSession("visitor", "Visitor", "visitor@champions.club");
   await request(app)
     .get("/api/v1/demo-data")
     .set("Cookie", `playpulse_ui=${visitorSession}`)
+    .expect(403);
+});
+
+test("staff sessions cannot modify administrator-managed shared records", async () => {
+  const staffSession = createUiSession("staff", "Test Staff", "staff@example.com");
+  await request(app)
+    .put("/api/v1/demo-data")
+    .set("Cookie", `playpulse_ui=${staffSession}`)
+    .send({ version: 0, data: {} })
     .expect(403);
 });
 

@@ -53,13 +53,3 @@ CREATE TABLE IF NOT EXISTS membership_history (
   note text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-
-INSERT INTO membership_plans (code, name, description, monthly_price, benefits)
-VALUES
-  ('GOLD', 'Gold', 'Premium full-access membership', 5000,
-   '{"courtFreeSessionsPerDay":2,"courtDiscountPercent":100,"shopDiscountPercent":15,"barDiscountPercent":15}'::jsonb),
-  ('SILVER', 'Silver', 'Standard club membership', 3000,
-   '{"courtFreeSessionsPerDay":0,"courtDiscountPercent":25,"shopDiscountPercent":10,"barDiscountPercent":10}'::jsonb),
-  ('JUNIOR', 'Junior', 'Discounted membership for members under 18', 1500,
-   '{"courtFreeSessionsPerDay":1,"courtDiscountPercent":50,"shopDiscountPercent":15,"barDiscountPercent":10,"maxAge":18}'::jsonb)
-ON CONFLICT (code) DO NOTHING;

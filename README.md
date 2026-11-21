@@ -362,16 +362,17 @@ npm.cmd start
 Then open `http://localhost:3000`. Backend health and API documentation are available at
 `http://localhost:3000/health` and `http://localhost:3000/api/v1/docs/`.
 
-### Demo accounts
+### Initial account setup
 
-Run the migrations and seed the database with `npm.cmd run migrate` and `npm.cmd run db:seed`
-before using the admin or member demo account. These credentials authenticate against PostgreSQL.
+There are no built-in sign-in credentials. After applying migrations, create the first
+administrator once with `npm.cmd run db:create-admin`, setting
+`BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` (12–128 characters), and
+`BOOTSTRAP_ADMIN_NAME` in the process environment. The command refuses to run if an administrator
+already exists. Remove the temporary password environment variable after setup.
 
-| Experience | Email | Password |
-|---|---|---|
-| Admin dashboard | `admin@champions.club` | `Admin@123` |
-| Member/Player portal | `member@champions.club` | `Member@123` |
-| Visitor | No login required | Continue as Visitor |
+Administrators should provision club-approved accounts and enter verified club data. Visitor
+access is public and does not create an account. Do not run `npm.cmd run db:seed` against a
+production database; it creates demonstration accounts and sample records.
 
 Portal URLs:
 
@@ -381,11 +382,13 @@ Portal URLs:
 
 The React interface currently provides:
 
-- Role-aware admin/manager workspaces, member portal, and visitor catalog
+- Distinct administrator and manager workspaces, a member portal, and a visitor catalog
+- Live role-specific dashboards with booking/revenue charts and operational attention queues
+- Administrator-only account provisioning, finance changes, pricing configuration, and payroll
 - Shared dashboard, records for club operations, staff leave review, and basic record creation
 - Date-aware court availability and transactional bookings
 - Live PostgreSQL-backed updates through Server-Sent Events
-- Demo account sign-in, session restoration, account switching, and logout
+- Database-backed sign-in, session restoration, account switching, and logout
 
 ### Real-time data synchronization
 
@@ -404,17 +407,16 @@ machine, PlayPulse uses a dedicated PostgreSQL cluster at
 database. Keep that local cluster running while the app is running. Verify the connection at
 `http://localhost:3000/ready`; it should return `200` with `"status":"ready"`.
 
-The admin dashboard stores its demo dataset in PostgreSQL with optimistic version checks.
+The admin dashboard stores club records in PostgreSQL with optimistic version checks. A new
+database starts with no sample club records; populate it with verified information.
 Database notifications stream changes to connected admin/manager dashboards and public
 availability/catalog views. Concurrent edits that use an outdated version are rejected and
 the latest state is reloaded instead of silently overwriting another user's changes.
-The UI shows the last sync time and retries transient database outages automatically. If
-PostgreSQL is not configured, it clearly reports local-only demo mode; those edits do not sync
-across devices.
+The UI shows sync status and retries transient database outages. It does not replace database
+errors with local demo records.
 
-The visitor/member API projection includes court availability, catalog and plan data. For a
-signed-in demo member it additionally includes only that member's own profile, bookings, and
-orders. The sample member account is currently mapped to demo member `M-1001`.
+The visitor/member API projection includes court availability, catalog, and plan data entered by
+the club. Member account registration creates or links a member profile using the submitted email.
 
 Clone the repository:
 
@@ -443,7 +445,7 @@ Apply migrations:
 npm.cmd run migrate
 ```
 
-Seed demonstration data after migrations:
+For a local prototype only, seed synthetic records after migrations:
 
 ```powershell
 npm.cmd run db:seed
@@ -477,6 +479,8 @@ Use `.env.example` as a template.
 | `PORT` | No | `3000` | HTTP port |
 | `DATABASE_URL` | Yes for database operations | None | PostgreSQL connection string |
 | `JWT_SECRET` | Yes for authentication | None | JWT signing and verification secret |
+| `DATABASE_SSL` | No | `false` | Enable TLS for PostgreSQL |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | No | `true` | Verify the database TLS certificate |
 | `CLUB_TIMEZONE` | No | `Asia/Kolkata` | Club business timezone |
 | `LOG_LEVEL` | No | `info` | Pino log level |
 
@@ -575,16 +579,26 @@ npm.cmd run quality
 npm.cmd run security:audit
 ```
 
-### Demo Data
+### Prototype Data (development only)
 
 ```powershell
 npm.cmd run db:seed
 ```
 
-Seed credentials are only for local demonstration:
+The idempotent seed adds synthetic members, plans, courts, bookings, shop and cafeteria activity,
+staff, enquiries, finance records, notifications, and matchmaking profiles. It merges `PROTO-`
+records into the shared UI state and does not delete non-prototype records. It only runs when
+`NODE_ENV=development` and `DATABASE_URL` targets the local `playplus` database. Never point it
+at production or real club data. Prototype prices and the sample tax rate are not club-approved
+values.
 
-- Admin: `admin@champions.club` / `Admin@123`
-- Member: `member@champions.club` / `Member@123`
+All prototype accounts use the password `Prototype!2026`:
+
+- Admin: `admin@champions.club`
+- Manager: `manager@champions.club`
+- Front desk: `desk@champions.club`
+- Staff: `staff@champions.club`
+- Member: `member@champions.club`
 
 ### Database Backup and Restore
 
@@ -628,6 +642,7 @@ All versioned application endpoints begin with `/api/v1`.
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | POST | `/api/v1/auth/register` | No | Create a member account |
+| POST | `/api/v1/auth/accounts` | Admin | Create a member or staff account with an assigned role |
 | POST | `/api/v1/auth/login` | No | Obtain a JWT |
 | GET | `/api/v1/auth/me` | Yes | Read current account context |
 
@@ -636,7 +651,7 @@ All versioned application endpoints begin with `/api/v1`.
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api/v1/memberships/plans` | No | List active plans |
-| POST | `/api/v1/memberships/plans` | Manager/Admin | Create or configure a plan |
+| POST | `/api/v1/memberships/plans` | Admin | Create or configure a plan |
 | POST | `/api/v1/memberships/members` | Front desk or higher | Register a member |
 | POST | `/api/v1/memberships/members/:memberId/renew` | Manager/Admin | Renew or change plan |
 | GET | `/api/v1/memberships/members/:memberId/history` | Staff permission | View membership history |
@@ -649,7 +664,7 @@ All versioned application endpoints begin with `/api/v1`.
 |---|---|---|---|
 | GET | `/api/v1/courts/sports` | No | List sports |
 | GET | `/api/v1/courts` | Court staff | List courts |
-| POST | `/api/v1/courts` | Court staff | Create a court |
+| POST | `/api/v1/courts` | Admin | Create a court |
 | PUT | `/api/v1/courts/:courtId/schedule` | Court staff | Configure schedule |
 | GET | `/api/v1/courts/availability?date=YYYY-MM-DD` | No | Check availability |
 | POST | `/api/v1/courts/reservations` | Court staff | Create reservation |
@@ -660,7 +675,7 @@ All versioned application endpoints begin with `/api/v1`.
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api/v1/shop/products` | No | View catalog |
-| POST | `/api/v1/shop/products` | Shop manager | Add a product |
+| POST | `/api/v1/shop/products` | Admin | Add or configure a product |
 | POST | `/api/v1/shop/products/:productId/stock` | Shop manager | Add or adjust stock |
 | GET | `/api/v1/shop/low-stock` | Shop manager | List low-stock products |
 | POST | `/api/v1/shop/orders` | Shop staff | Create counter or online order |
@@ -691,13 +706,13 @@ All versioned application endpoints begin with `/api/v1`.
 | POST | `/api/v1/enquiries/:enquiryId/followups` | Staff/Manager | Add follow-up |
 | POST | `/api/v1/quotations` | Staff/Manager | Create quotation |
 | PATCH | `/api/v1/quotations/:quotationId/status` | Staff/Manager | Update quotation |
-| POST | `/api/v1/staff` | Manager/Admin | Create staff profile |
+| POST | `/api/v1/staff` | Admin | Create staff profile |
 | POST | `/api/v1/staff/:staffId/shifts` | Manager/Admin | Schedule shift |
 | POST | `/api/v1/staff/:staffId/leave` | Authenticated staff | Request leave |
 | PATCH | `/api/v1/leave/:leaveId` | Manager/Admin | Approve or reject leave |
 | POST | `/api/v1/expenses` | Finance manager | Record expense |
 | POST | `/api/v1/invoices` | Finance manager | Create business invoice |
-| POST | `/api/v1/payroll` | Staff manager | Create payroll record |
+| POST | `/api/v1/payroll` | Admin | Create payroll record |
 | GET | `/api/v1/reports/performance` | Finance reader | Period performance |
 
 ### Assistant
@@ -734,11 +749,14 @@ Content-Type: application/json
 {
   "email": "member@example.com",
   "password": "A-long-safe-password",
-  "fullName": "Test Member"
+  "fullName": "Test Member",
+  "phone": "+15551234567"
 }
 ```
 
-Public registration creates a `member` account only. A public caller cannot self-register as an admin, manager, or staff role.
+Public registration creates a member account and profile, or links the account to an existing
+unclaimed member record with the same email. A public caller cannot self-register as an admin,
+manager, or staff role.
 
 ### Log In
 
@@ -855,8 +873,10 @@ The UI and server routes use this inheritance order:
 | Member | Visitor pages plus the signed-in member account area |
 | Front Desk | Member-facing operations, member records, court and enquiry tasks |
 | Staff | Front desk operations plus shop, cafeteria, court, and assistant tasks |
-| Manager | Operational dashboard, members, finance, staff, reports, and settings access |
+| Manager | Operations dashboard, reservations, enquiries, shop/cafeteria workflows, staff leave review, and read-only reports |
 | Admin | Complete dashboard and every management feature |
+
+Managers cannot open Finance or Settings, provision accounts or staff, edit membership/court/product pricing, or write finance/payroll records. Administrators retain full access. The API enforces these boundaries independently of the navigation, including against older manager tokens.
 
 Protected UI routes are separated at the server:
 
@@ -874,12 +894,17 @@ Examples of permissions include:
 - `members.read`
 - `members.write`
 - `memberships.manage`
+- `membership_plans.manage`
 - `courts.manage`
+- `courts.configure`
 - `shop.manage`
+- `shop.catalog`
 - `bar.manage`
 - `finance.read`
 - `finance.manage`
 - `staff.manage`
+- `staff.provision`
+- `payroll.manage`
 - `auth.admin`
 
 `admin` bypasses normal permission checks. Other roles receive permissions through role-permission mappings in PostgreSQL.
@@ -1036,26 +1061,31 @@ The repository includes [render.yaml](render.yaml), which defines:
 - Production environment mode
 - A generated JWT secret
 - A linked database URL
-- Migration-before-start behavior
-- `/health` health check
+- TLS database connections
+- Migrations in the pre-deploy step
+- `/ready` health check
 
 Deploy through the Render dashboard:
 
 1. Connect the GitHub repository.
 2. Create a service using the Blueprint.
 3. Allow Render to create `playpulse-db`.
-4. Configure `DATABASE_URL` through the Blueprint database binding.
-5. Confirm `JWT_SECRET` is generated.
-6. Deploy the `main` branch.
-7. Verify the deployed health and readiness endpoints.
+4. Confirm the web service and database are in the same region.
+5. Deploy the `main` branch and wait for migrations and `/ready` to pass.
+6. In the service shell, set `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, and
+   `BOOTSTRAP_ADMIN_NAME`, then run `npm run db:create-admin` exactly once.
+7. Remove the temporary bootstrap password and verify the deployed app sign-in.
 
-The start command performs migrations before starting the API:
+Render runs migrations before switching the service to the new deployment:
 
 ```text
-npm run migrate:deploy && npm start
+npm run migrate:deploy
 ```
 
-Migration execution is non-destructive and repeatable.
+The deployment uses a paid Postgres plan because free databases are not suitable for durable
+production records. Back up the database before deploying schema changes. The TLS certificate
+verification exception in the Blueprint is limited to Render's private internal database
+connection, which uses self-signed certificates.
 
 Important verification endpoints after deployment:
 

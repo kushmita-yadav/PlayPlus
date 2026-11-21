@@ -25,7 +25,7 @@ const memberSchema = z.object({
   phone: z.string().trim().min(7).max(20),
   email: z.string().email().optional(),
   dateOfBirth: z.string().date().optional(),
-  planCode: z.enum(["GOLD", "SILVER", "JUNIOR"]),
+  planCode: z.string().trim().min(2).max(30).transform((value) => value.toUpperCase()),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -89,7 +89,7 @@ membershipRouter.get("/members/:memberId/benefits", requireAuth, requirePermissi
   }
 });
 
-membershipRouter.post("/plans", requireAuth, requirePermission("memberships.manage"), async (req, res, next) => {
+membershipRouter.post("/plans", requireAuth, requirePermission("membership_plans.manage"), async (req, res, next) => {
   try {
     const db = requireDatabase();
     const input = planSchema.parse(req.body);

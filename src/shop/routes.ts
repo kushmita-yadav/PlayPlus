@@ -49,7 +49,7 @@ shopRouter.get("/products", async (_req, res, next) => {
   }
 });
 
-shopRouter.post("/products", requireAuth, requirePermission("shop.manage"), async (req, res, next) => {
+shopRouter.post("/products", requireAuth, requirePermission("shop.catalog"), async (req, res, next) => {
   try {
     const input = productSchema.parse(req.body);
     const result = await db().query(
@@ -320,7 +320,7 @@ shopRouter.get("/orders", requireAuth, requirePermission("shop.manage"), async (
   }
 });
 
-shopRouter.post("/products/:productId/variants", requireAuth, requirePermission("shop.manage"), async (req, res, next) => {
+shopRouter.post("/products/:productId/variants", requireAuth, requirePermission("shop.catalog"), async (req, res, next) => {
   try {
     const input = z.object({
       variantSku: z.string().trim().min(2).max(50),

@@ -86,22 +86,3 @@ INSERT INTO sports (code, name) VALUES
   ('BADMINTON', 'Badminton'),
   ('CRICKET', 'Cricket')
 ON CONFLICT (code) DO NOTHING;
-
-INSERT INTO courts (sport_id, code, name, base_hourly_price)
-SELECT s.id, c.code, c.name, c.price
-FROM sports s
-CROSS JOIN (
-  VALUES
-    ('TENNIS-1', 'Tennis Court 1', 1200::numeric),
-    ('TENNIS-2', 'Tennis Court 2', 1200::numeric),
-    ('PADEL-1', 'Padel Court 1', 1000::numeric),
-    ('BADMINTON-1', 'Badminton Court 1', 800::numeric),
-    ('CRICKET-1', 'Cricket Net 1', 1500::numeric)
-) AS c(code, name, price)
-WHERE s.code = CASE split_part(c.code, '-', 1)
-  WHEN 'TENNIS' THEN 'TENNIS'
-  WHEN 'PADEL' THEN 'PADEL'
-  WHEN 'BADMINTON' THEN 'BADMINTON'
-  WHEN 'CRICKET' THEN 'CRICKET'
-END
-ON CONFLICT (code) DO NOTHING;

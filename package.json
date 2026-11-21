@@ -20,7 +20,8 @@
     "migrate:deploy": "node dist/src/database/migrate.js",
     "security:audit": "npm audit --omit=dev",
     "quality": "npm run check && npm run lint && npm test && npm run build",
-    "db:seed": "tsx scripts/seed-demo.ts",
+    "db:create-admin": "tsx scripts/create-admin.ts",
+    "db:seed": "tsx scripts/seed-prototype.ts",
     "db:backup": "node scripts/database-backup.mjs",
     "db:restore": "node scripts/database-restore.mjs"
   },

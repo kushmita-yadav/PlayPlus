@@ -132,7 +132,7 @@ operationsRouter.patch("/quotations/:quotationId/status", requireAuth, requirePe
   }
 });
 
-operationsRouter.post("/staff", requireAuth, requirePermission("staff.manage"), async (req, res, next) => {
+operationsRouter.post("/staff", requireAuth, requirePermission("staff.provision"), async (req, res, next) => {
   try {
     const input = z.object({
       accountId: z.string().uuid().optional(),
@@ -321,7 +321,7 @@ operationsRouter.post("/invoices", requireAuth, requirePermission("finance.manag
   }
 });
 
-operationsRouter.post("/payroll", requireAuth, requirePermission("staff.manage"), async (req, res, next) => {
+operationsRouter.post("/payroll", requireAuth, requirePermission("payroll.manage"), async (req, res, next) => {
   try {
     const input = z.object({
       staffId: z.string().uuid(),

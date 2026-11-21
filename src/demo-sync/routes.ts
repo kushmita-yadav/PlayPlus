@@ -1,14 +1,32 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import type { PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { pool } from "../database/pool.js";
+import { env } from "../config/env.js";
 import { ApiError } from "../middleware/errors.js";
 import { readUiSession } from "../auth/auth.js";
 import { logger } from "../logger.js";
 
 export const demoSyncRouter = Router();
-const allowedRoles = new Set(["admin", "manager"]);
+const allowedReadRoles = new Set(["admin", "manager", "staff", "front_desk"]);
+const allowedWriteRoles = new Set(["admin", "manager"]);
+const managerWritableModules = new Set([
+  "bookings", "orders", "menu", "tables", "tabs",
+  "kitchen", "enquiries", "leave", "notifications",
+]);
+const sharedModules = [
+  "members", "plans", "courts", "bookings", "products", "orders", "menu", "tables",
+  "tabs", "kitchen", "enquiries", "staff", "leave", "transactions", "expenses",
+  "invoices", "notifications",
+] as const;
+const modulesByRole: Record<string, ReadonlySet<string>> = {
+  admin: new Set(sharedModules),
+  manager: new Set(sharedModules),
+  staff: new Set(["courts", "bookings", "products", "orders", "menu", "tables", "tabs", "kitchen", "enquiries", "notifications"]),
+  front_desk: new Set(["members", "courts", "bookings", "enquiries", "notifications"]),
+};
 const stateInput = z.object({
   version: z.number().int().nonnegative(),
   data: z.record(z.string(), z.unknown()),
@@ -41,6 +59,7 @@ const memberSchema = z.object({
   expiry: z.string(),
   phone: z.string(),
   balance: z.coerce.number(),
+  email: z.union([z.string().email(), z.literal("")]).optional(),
 });
 const memberOrderSchema = z.object({
   id: z.string(),
@@ -72,8 +91,19 @@ function requireDemoStaff(req: Request, _res: Response, next: NextFunction) {
   const session = getUiSession(req);
   if (!session) {
     next(new ApiError(401, "A signed-in staff session is required", "UNAUTHORIZED"));
-  } else if (!allowedRoles.has(session.role)) {
+  } else if (!allowedReadRoles.has(session.role)) {
     next(new ApiError(403, "Staff access is required", "FORBIDDEN"));
+  } else {
+    next();
+  }
+}
+
+function requireDemoManager(req: Request, _res: Response, next: NextFunction) {
+  const session = getUiSession(req);
+  if (!session) {
+    next(new ApiError(401, "A signed-in staff session is required", "UNAUTHORIZED"));
+  } else if (!allowedWriteRoles.has(session.role)) {
+    next(new ApiError(403, "Manager access is required to change shared records", "FORBIDDEN"));
   } else {
     next();
   }
@@ -146,11 +176,7 @@ demoSyncRouter.get("/public", async (_req, res, next) => {
        WHERE singleton_key=1`,
     );
     const row = result.rows[0];
-    if (!row) {
-      res.status(200).json({ success: true, data: { state: null, version: 0, updatedAt: null } });
-      return;
-    }
-    const state = row.state as Record<string, unknown>;
+    const state = (row?.state ?? {}) as Record<string, unknown>;
     const session = getUiSession(_req);
     const courts = z.array(publicCourtSchema).parse(state.courts ?? []);
     const bookings = z.array(publicBookingSchema).parse(state.bookings ?? []);
@@ -160,14 +186,59 @@ demoSyncRouter.get("/public", async (_req, res, next) => {
     const plans = z.array(publicPlanSchema).parse(state.plans ?? []);
     const activeBookings = bookings.filter((booking) =>
       !["cancelled", "rejected"].includes(booking.status.toLowerCase()));
-    const member = session?.role === "member"
-      ? members.find((item) => item.id === "M-1001") ?? null
+    const stateMember = session?.role === "member"
+      ? members.find((item) => item.email?.toLowerCase() === session.email.toLowerCase()) ?? null
       : null;
+    const memberResult = session?.role === "member" ? await database().query(
+      `SELECT m.id::text AS id, m.full_name AS name, mp.name AS plan,
+              to_char(mr.expires_at::date, 'YYYY-MM-DD') AS expiry,
+              m.phone, NULL::numeric AS balance
+       FROM members m
+       JOIN accounts a ON a.id=m.account_id
+       LEFT JOIN membership_records mr ON mr.member_id=m.id AND mr.status='active'
+       LEFT JOIN membership_plans mp ON mp.id=mr.plan_id
+       WHERE lower(a.email)=lower($1)
+       ORDER BY mr.created_at DESC NULLS LAST
+       LIMIT 1`,
+      [session.email],
+    ) : null;
+    const member = memberResult?.rows[0]
+      ? {
+          id: String(memberResult.rows[0].id),
+          name: String(memberResult.rows[0].name),
+          plan: memberResult.rows[0].plan ? String(memberResult.rows[0].plan) : null,
+          expiry: memberResult.rows[0].expiry ? String(memberResult.rows[0].expiry) : null,
+          phone: String(memberResult.rows[0].phone),
+          balance: stateMember?.balance ?? null,
+        }
+      : stateMember;
+    const memberBookings = memberResult?.rows[0] ? await database().query(
+      `SELECT r.court_id::text AS "courtId", c.name AS "courtName",
+              to_char(r.starts_at AT TIME ZONE $2, 'YYYY-MM-DD') AS date,
+              to_char(r.starts_at AT TIME ZONE $2, 'HH24:MI') AS time,
+              r.status
+       FROM court_reservations r
+       JOIN courts c ON c.id=r.court_id
+       WHERE r.member_id=$1 AND r.status IN ('confirmed','completed')
+       ORDER BY r.starts_at DESC
+       LIMIT 100`,
+      [memberResult.rows[0].id, env.CLUB_TIMEZONE],
+    ) : null;
+    const memberOrders = memberResult?.rows[0] ? await database().query(
+      `SELECT id::text AS id, member_id::text AS "memberId", channel, fulfillment,
+              status, total_amount AS total,
+              to_char(created_at AT TIME ZONE $2, 'YYYY-MM-DD') AS date
+       FROM shop_orders
+       WHERE member_id=$1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [memberResult.rows[0].id, env.CLUB_TIMEZONE],
+    ) : null;
     res.status(200).json({
       success: true,
       data: {
-        version: Number(row.version),
-        updatedAt: row.updated_at,
+        version: Number(row?.version ?? 0),
+        updatedAt: row?.updated_at ?? null,
         state: {
           courts,
           plans,
@@ -180,9 +251,9 @@ demoSyncRouter.get("/public", async (_req, res, next) => {
           })),
           ...(session?.role === "member" ? {
             member,
-            memberOrders: orders.filter((order) => order.memberId === "M-1001"),
-            memberBookings: activeBookings
-              .filter((booking) => booking.memberId === "M-1001" || booking.participantName === session.name)
+            memberOrders: memberOrders?.rows ?? orders.filter((order) => order.memberId === member?.id),
+            memberBookings: memberBookings?.rows ?? activeBookings
+              .filter((booking) => member && booking.memberId === member.id)
               .map((booking) => ({
                 courtId: booking.courtId,
                 date: booking.date,
@@ -199,7 +270,7 @@ demoSyncRouter.get("/public", async (_req, res, next) => {
   }
 });
 
-demoSyncRouter.get("/", requireDemoStaff, async (_req, res, next) => {
+demoSyncRouter.get("/", requireDemoStaff, async (req, res, next) => {
   try {
     const result = await database().query(
       `SELECT state, version, updated_at
@@ -207,10 +278,17 @@ demoSyncRouter.get("/", requireDemoStaff, async (_req, res, next) => {
        WHERE singleton_key=1`,
     );
     const row = result.rows[0];
+    const session = getUiSession(req);
+    const source = row?.state as Record<string, unknown> | undefined;
+    const readableModules = modulesByRole[session?.role ?? ""] ?? new Set<string>();
+    const state = Object.fromEntries(sharedModules.map((module) => [
+      module,
+      readableModules.has(module) && Array.isArray(source?.[module]) ? source[module] : [],
+    ]));
     res.status(200).json({
       success: true,
       data: {
-        state: row?.state ?? null,
+        state: source ? state : null,
         version: Number(row?.version ?? 0),
         updatedAt: row?.updated_at ?? null,
       },
@@ -257,9 +335,16 @@ demoSyncRouter.post("/public/bookings", async (req, res, next) => {
     if (overlap) throw new ApiError(409, "Court is already reserved for an overlapping time", "COURT_CONFLICT");
 
     const session = getUiSession(req);
+    const member = session?.role === "member"
+      ? z.array(memberSchema).parse(state.members ?? [])
+        .find((item) => item.email?.toLowerCase() === session.email.toLowerCase())
+      : undefined;
+    if (session?.role === "member" && !member) {
+      throw new ApiError(403, "A linked member profile is required to book a court", "MEMBER_PROFILE_REQUIRED");
+    }
     const reservation = {
       id: `B-${randomUUID()}`,
-      memberId: session?.role === "member" ? "M-1001" : null,
+      memberId: member?.id ?? null,
       participantName: session?.role === "member" ? session.name : "Visitor",
       courtId: input.courtId,
       court: court.name,
@@ -291,13 +376,29 @@ demoSyncRouter.post("/public/bookings", async (req, res, next) => {
   }
 });
 
-demoSyncRouter.put("/", requireDemoStaff, async (req, res, next) => {
+demoSyncRouter.put("/", requireDemoManager, async (req, res, next) => {
   const client = pool ? await pool.connect() : null;
   try {
     if (!client) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
     const input = stateInput.parse(req.body);
     const session = getUiSession(req);
     await client.query("BEGIN");
+    const current = await client.query(
+      "SELECT state FROM shared_demo_state WHERE singleton_key=1 FOR UPDATE",
+    );
+    if (session?.role === "manager") {
+      const currentState = (current.rows[0]?.state ?? {}) as Record<string, unknown>;
+      const restrictedChanges = sharedModules.filter((module) =>
+        !managerWritableModules.has(module) &&
+        !isDeepStrictEqual(input.data[module] ?? [], currentState[module] ?? []));
+      if (restrictedChanges.length) {
+        throw new ApiError(
+          403,
+          `Manager access cannot modify: ${restrictedChanges.join(", ")}`,
+          "FORBIDDEN",
+        );
+      }
+    }
     const result = await client.query(
       `INSERT INTO shared_demo_state (singleton_key, state, version, updated_by)
        VALUES (1, $1::jsonb, 1, $3)

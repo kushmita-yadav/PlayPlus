@@ -29,12 +29,12 @@ export type PublicState = {
   member?: {
     id: string;
     name: string;
-    plan: string;
-    expiry: string;
+    plan: string | null;
+    expiry: string | null;
     phone: string;
-    balance: number;
+    balance: number | null;
   } | null;
-  memberBookings?: Array<{ courtId: string; date: string; time: string; status: string }>;
+  memberBookings?: Array<{ courtId: string; courtName?: string; date: string; time: string; status: string }>;
   memberOrders?: Array<{
     id: string;
     memberId: string | null;

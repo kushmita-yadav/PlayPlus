@@ -91,7 +91,7 @@ courtRouter.put("/:courtId/schedule", requireAuth, requirePermission("courts.man
   }
 });
 
-courtRouter.post("/", requireAuth, requirePermission("courts.manage"), async (req, res, next) => {
+courtRouter.post("/", requireAuth, requirePermission("courts.configure"), async (req, res, next) => {
   const client = pool ? await pool.connect() : null;
   try {
     if (!client) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
@@ -277,16 +277,6 @@ courtRouter.post("/reservations", requireAuth, requireMemberOrPermission("courts
       [`COURT-${Date.now()}`, reservationId, baseAmount - discountAmount],
     );
     await client.query("COMMIT");
-    if (input.memberId) {
-      await enqueueNotification({
-        recipientType: "member",
-        recipientId: input.memberId,
-        channel: "email",
-        eventType: "booking_confirmed",
-        subject: "Court booking confirmed",
-        body: `Your court booking is confirmed for ${start.toISOString()}.`,
-      });
-    }
     if (input.memberId) {
       await enqueueNotification({
         recipientType: "member",

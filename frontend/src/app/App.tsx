@@ -7,10 +7,15 @@ import {
 import {
   apiRequest, ApiRequestError, clearAuthTokens, getRefreshToken, saveAuthTokens, type ApiEnvelope,
 } from "../lib/api";
-import { initialDemoState } from "../data/demo-state";
 import { bookingTimes, isSlotBooked } from "../lib/booking.js";
 import type { Booking } from "../lib/booking.js";
 import type { DemoRole, DemoRow, DemoSession, DemoState, ModuleKey, PublicState, SyncStatus } from "../types";
+
+const emptyDemoState: DemoState = {
+  members: [], plans: [], courts: [], bookings: [], products: [], orders: [],
+  menu: [], tables: [], tabs: [], kitchen: [], enquiries: [], staff: [],
+  leave: [], transactions: [], expenses: [], invoices: [], notifications: [],
+};
 
 const navigation = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -32,7 +37,8 @@ type FieldDefinition = { name: string; label: string; type?: string; options?: s
 
 const moduleConfig: Partial<Record<ViewKey, { title: string; arrays: ModuleKey[]; fields?: FieldDefinition[] }>> = {
   members: { title: "Members", arrays: ["members"], fields: [
-    { name: "name", label: "Full name" }, { name: "plan", label: "Plan", options: ["Gold", "Silver", "Junior"] },
+    { name: "name", label: "Full name" }, { name: "plan", label: "Plan" },
+    { name: "email", label: "Member account email", type: "email" },
     { name: "phone", label: "Phone" }, { name: "expiry", label: "Membership expiry", type: "date" },
     { name: "balance", label: "Account balance", type: "number" },
   ] },
@@ -69,7 +75,7 @@ const moduleConfig: Partial<Record<ViewKey, { title: string; arrays: ModuleKey[]
 
 const roleViews: Record<DemoRole, ViewKey[]> = {
   admin: navigation.map((item) => item.key),
-  manager: navigation.filter((item) => item.key !== "settings").map((item) => item.key),
+  manager: navigation.filter((item) => !["finance", "settings"].includes(item.key)).map((item) => item.key),
   staff: ["dashboard", "courts", "shop", "cafeteria", "enquiries", "assistant", "notifications"],
   front_desk: ["dashboard", "members", "courts", "enquiries", "notifications"],
   member: [],
@@ -154,7 +160,9 @@ function useStaffData(active: boolean) {
         setVersion(response.data.version);
       }
     } else {
-      await saveData(initialDemoState);
+      versionRef.current = 0;
+      setVersion(0);
+      setData(emptyDemoState);
     }
     setStatus("live");
   }, [saveData]);
@@ -219,12 +227,19 @@ function usePublicData(active: boolean) {
   const [status, setStatus] = useState<SyncStatus>("connecting");
   const versionRef = useRef(0);
   const refresh = useCallback(async () => {
-    const response = await apiRequest<ApiEnvelope<{ state: PublicState | null; version: number }>>("/api/v1/demo-data/public");
-    if (response.data.state && response.data.version >= versionRef.current) {
-      versionRef.current = response.data.version;
-      setData({ ...response.data.state, version: response.data.version });
+    try {
+      const response = await apiRequest<ApiEnvelope<{ state: PublicState | null; version: number }>>("/api/v1/demo-data/public");
+      if (response.data.version >= versionRef.current) {
+        versionRef.current = response.data.version;
+        setData(response.data.state
+          ? { ...response.data.state, version: response.data.version }
+          : { version: response.data.version, courts: [], plans: [], bookings: [], products: [] });
+      }
+      setStatus("live");
+    } catch (cause) {
+      setStatus("error");
+      throw cause;
     }
-    setStatus("live");
   }, []);
   useEffect(() => {
     if (!active) return;
@@ -273,11 +288,10 @@ function usePublicData(active: boolean) {
 function App() {
   const path = window.location.pathname;
   const { session, setSession, loading, error } = useDemoSession();
-  const [roleChoice, setRoleChoice] = useState<"admin" | "member">("admin");
   const [view, setView] = useState<ViewKey>("dashboard");
   const [publicView, setPublicView] = useState("home");
   const staff = useStaffData(Boolean(session && session.role !== "visitor" && session.role !== "member"));
-  const publicSync = usePublicData(path === "/visitor" || path === "/portal" || session?.role === "member");
+  const publicSync = usePublicData(path === "/" || path === "/visitor" || path === "/portal" || session?.role === "member");
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
   const allowedViews = session ? roleViews[session.role] ?? [] : [];
@@ -294,6 +308,12 @@ function App() {
       window.location.replace("/");
     } else if (path === "/portal" && new URLSearchParams(location.search).get("mode") === "member" && session?.role !== "member") {
       window.location.replace("/");
+    } else if (path === "/login" && session) {
+      window.location.replace(session.role === "member" ? "/portal?mode=member" : "/admin");
+    } else if (path === "/" && session && session.role !== "visitor") {
+      window.location.replace(session.role === "member" ? "/portal?mode=member" : "/admin");
+    } else if (path === "/visitor" && session && session.role !== "visitor") {
+      window.location.replace(session.role === "member" ? "/portal?mode=member" : "/admin");
     }
   }, [loading, path, session]);
 
@@ -360,18 +380,15 @@ function App() {
   };
 
   if (loading) return <LoadingPage label="Checking your secure session…" />;
-  if (path === "/" || path === "/login") {
+  if (path === "/login") {
     return <LoginPage
-      roleChoice={roleChoice}
-      setRoleChoice={setRoleChoice}
       busy={busy}
       error={error}
       onSignIn={signIn}
-      onVisitor={async () => { window.location.assign("/visitor"); }}
     />;
   }
-  if (path === "/visitor" || path === "/portal") {
-    const memberMode = session?.role === "member" && (path === "/portal" || new URLSearchParams(location.search).get("mode") === "member");
+  if (path === "/" || path === "/visitor" || path === "/portal") {
+    const memberMode = session?.role === "member" && (path === "/" || path === "/portal" || new URLSearchParams(location.search).get("mode") === "member");
     return <PublicPortal
       memberMode={memberMode}
       member={publicSync.data?.member ?? null}
@@ -391,6 +408,7 @@ function App() {
   const selectedNavigation = navigation.find((item) => item.key === currentView) ?? navigation[0];
   return <AdminWorkspace
     session={session}
+    canManage={session.role === "admin" || session.role === "manager"}
     view={currentView}
     title={selectedNavigation.label}
     allowedViews={allowedViews}
@@ -437,29 +455,15 @@ function LoadingPage({ label }: { label: string }) {
   return <main className="loading-page"><span className="brand-mark">P</span><strong>PlayPulse</strong><p>{label}</p></main>;
 }
 
-function LoginPage({ roleChoice, setRoleChoice, busy, error, onSignIn, onVisitor }: {
-  roleChoice: "admin" | "member";
-  setRoleChoice: (role: "admin" | "member") => void;
+function LoginPage({ busy, error, onSignIn }: {
   busy: boolean;
   error: string;
   onSignIn: (email: string, password: string) => Promise<void>;
-  onVisitor: () => Promise<void>;
 }) {
-  const [email, setEmail] = useState("admin@champions.club");
-  const [password, setPassword] = useState("Admin@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const visit = async () => {
-    setMessage("");
-    try { await onVisitor(); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : "Visitor access is unavailable"); }
-  };
-  const selectRole = (role: "admin" | "member") => {
-    setRoleChoice(role);
-    setEmail(role === "admin" ? "admin@champions.club" : "member@champions.club");
-    setPassword(role === "admin" ? "Admin@123" : "Member@123");
-    setMessage("");
-  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setMessage("");
@@ -470,29 +474,25 @@ function LoginPage({ roleChoice, setRoleChoice, busy, error, onSignIn, onVisitor
     <section className="login-visual">
       <a className="visual-brand" href="/"><span>P</span><div><strong>PlayPulse</strong><small>Champions Club</small></div></a>
       <div className="visual-copy"><p>One club. Every operation.</p><h1>Play better.<br />Manage smarter.</h1>
-        <div className="visual-stats"><div><strong>4</strong><span>Sports</span></div><div><strong>12</strong><span>Courts & nets</span></div><div><strong>1</strong><span>Unified platform</span></div></div>
+        <div className="visual-stats"><div><strong>One</strong><span>Club workspace</span></div><div><strong>Live</strong><span>Shared records</span></div><div><strong>Secure</strong><span>Role-based access</span></div></div>
       </div>
     </section>
     <section className="login-panel"><div className="login-card">
-      <p className="eyebrow">CHAMPIONS CLUB</p><h2>Welcome to PlayPulse</h2><p className="subtitle">Sign in to your workspace or explore the club as a visitor.</p>
-      <div className="role-tabs" aria-label="Login role">
-        <button className={roleChoice === "admin" ? "active" : ""} onClick={() => selectRole("admin")}>Admin</button>
-        <button className={roleChoice === "member" ? "active" : ""} onClick={() => selectRole("member")}>Member</button>
-        <button onClick={() => void visit()}>Visitor</button>
-      </div>
+      <p className="eyebrow">CHAMPIONS CLUB</p><h2>Welcome to PlayPulse</h2><p className="subtitle">Sign in with your account to open the correct workspace.</p>
       <form onSubmit={(event) => void submit(event)}>
         <label>Email address<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
         <label>Password<div className="password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword(!showPassword)}>{showPassword ? "Hide" : "Show"}</button></div></label>
         <button className="login-button" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
       </form>
-      <div className="demo-credentials"><div><span>Demo email</span><strong>{roleChoice === "admin" ? "admin@champions.club" : "member@champions.club"}</strong></div><div><span>Demo password</span><strong>{roleChoice === "admin" ? "Admin@123" : "Member@123"}</strong></div></div>
+      <p className="subtitle">Your club administrator provides your sign-in credentials.</p>
       <p className="login-error" role="alert">{message || error}</p>
     </div></section>
   </main>;
 }
 
-function AdminWorkspace({ session, view, title, allowedViews, data, syncStatus, saving, onNavigate, onLogout, onCreate, onBook, onUpdate, notify, children }: {
+function AdminWorkspace({ session, canManage, view, title, allowedViews, data, syncStatus, saving, onNavigate, onLogout, onCreate, onBook, onUpdate, notify, children }: {
   session: DemoSession;
+  canManage: boolean;
   view: ViewKey;
   title: string;
   allowedViews: ViewKey[];
@@ -529,10 +529,10 @@ function AdminWorkspace({ session, view, title, allowedViews, data, syncStatus, 
       </header>
       <section className="app-view">
         {!data ? <div className="empty-state"><Activity /><strong>Connecting to shared club data</strong><span>Live data will appear as soon as the database responds.</span></div> :
-          view === "dashboard" ? <Dashboard data={data} onNavigate={onNavigate} /> :
-          view === "courts" ? <AdminCourts data={data} onBook={onBook} notify={notify} saving={saving} /> :
+          view === "dashboard" ? <Dashboard data={data} role={session.role} name={session.name} onNavigate={onNavigate} /> :
+          view === "courts" ? <AdminCourts data={data} onBook={onBook} notify={notify} saving={saving} canManage={canManage} /> :
           view === "assistant" ? <AssistantPanel data={data} /> :
-          <AdminModule view={view} data={data} saving={saving} onCreate={onCreate} onUpdate={onUpdate} />}
+          <AdminModule view={view} data={data} saving={saving} onCreate={onCreate} onUpdate={onUpdate} role={session.role} />}
       </section>
     </main>
     {children}
@@ -544,29 +544,125 @@ function SyncIndicator({ status, saving }: { status: SyncStatus; saving: boolean
   return <span className={`sync-indicator ${status}`} role="status" aria-live="polite"><i />{label}</span>;
 }
 
-function Dashboard({ data, onNavigate }: { data: DemoState; onNavigate: (view: ViewKey) => void }) {
+function Dashboard({ data, role, name, onNavigate }: {
+  data: DemoState; role: DemoRole; name: string; onNavigate: (view: ViewKey) => void;
+}) {
+  const [range, setRange] = useState<7 | 30>(7);
+  const isAdmin = role === "admin";
+  const isManager = role === "manager";
+  const today = todayValue();
+  const activeBookings = data.bookings.filter((booking) =>
+    !["cancelled", "rejected"].includes(String(booking.status ?? "").toLowerCase()));
+  const todayBookings = activeBookings.filter((booking) => String(booking.date ?? "").slice(0, 10) === today).length;
+  const upcomingBookings = activeBookings.filter((booking) => String(booking.date ?? "").slice(0, 10) >= today).length;
   const revenue = data.transactions.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const pendingInvoices = data.invoices.filter((invoice) => Number(invoice.paid || 0) < Number(invoice.amount || 0)).length;
   const lowStock = data.products.filter((product) => Number(product.stock || 0) <= Number(product.threshold || 0));
-  const stats = [
-    { title: "Members", value: data.members.length, note: "Active club records", icon: Users },
-    { title: "Court bookings", value: data.bookings.length, note: "Shared reservations", icon: CalendarDays },
+  const openEnquiries = data.enquiries.filter((item) =>
+    !["closed", "converted"].includes(String(item.status ?? "").toLowerCase())).length;
+  const pendingLeave = data.leave.filter((item) => String(item.status ?? "").toLowerCase() === "pending").length;
+  const stats = isAdmin ? [
+    { title: "Member records", value: data.members.length, note: "Club member profiles", icon: Users },
+    { title: "Upcoming bookings", value: upcomingBookings, note: "Today and future reservations", icon: CalendarDays },
     { title: "Recorded revenue", value: money(revenue), note: "Across all channels", icon: CircleDollarSign },
     { title: "Outstanding invoices", value: pendingInvoices, note: "Need follow-up", icon: ClipboardList },
+  ] : [
+    { title: "Today's bookings", value: todayBookings, note: "Confirmed reservations", icon: CalendarDays },
+    { title: "Open enquiries", value: openEnquiries, note: "Awaiting follow-up", icon: ClipboardList },
+    { title: "Low-stock items", value: lowStock.length, note: "At or below threshold", icon: Package },
+    { title: "Leave requests", value: pendingLeave, note: "Waiting for review", icon: Users },
   ];
-  return <><div className="welcome-row"><div><span className="eyebrow">CLUB OVERVIEW</span><h2>Good day, operations team</h2><p>Your club operations and shared data at a glance.</p></div><button className="primary-button" onClick={() => onNavigate("courts")}><CalendarDays size={16} /> View court schedule</button></div>
-    <div className="stats-grid">{stats.map(({ title, value, note, icon: Icon }) => <article className="card stat-card" key={title}><div className="stat-top"><span>{title}</span><span className="stat-icon"><Icon size={18} /></span></div><strong className="stat-value">{value}</strong><small className="stat-note">{note}</small></article>)}</div>
-    <div className="content-grid dashboard-grid">
-      <section className="card"><div className="card-header"><div><h3>Recent bookings</h3><p>Updates appear across staff and member views.</p></div><button className="text-button" onClick={() => onNavigate("courts")}>View schedule <ArrowRight size={14} /></button></div>
-        <DataTable rows={data.bookings.slice(0, 6)} empty="No court bookings yet." />
+  const chart = Array.from({ length: range }, (_, index) => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - (range - index - 1));
+    const key = todayValueFor(date);
+    const value = isAdmin
+      ? data.transactions.filter((item) => String(item.date ?? "").slice(0, 10) === key)
+        .reduce((sum, item) => sum + Number(item.amount || 0), 0)
+      : activeBookings.filter((item) => String(item.date ?? "").slice(0, 10) === key).length;
+    return { label: new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" }).format(date), value };
+  });
+  const chartMax = Math.max(...chart.map((point) => point.value), 1);
+  const chartPoints = chart.map((point, index) => ({
+    ...point,
+    x: 28 + index * (584 / Math.max(chart.length - 1, 1)),
+    y: 180 - (point.value / chartMax) * 142,
+  }));
+  const chartLine = chartPoints.map((point) => `${point.x},${point.y}`).join(" ");
+  const chartArea = `${chartPoints.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ")} L 612 198 L 28 198 Z`;
+  const courtLoads = data.courts.map((court) => ({
+    name: String(court.name ?? "Court"),
+    count: activeBookings.filter((booking) => booking.courtId === court.id).length,
+  })).sort((a, b) => b.count - a.count).slice(0, 4);
+  const maximumCourtLoad = Math.max(...courtLoads.map((court) => court.count), 1);
+  const firstName = name.trim().split(/\s+/)[0] || "team";
+  const roleTitle = isAdmin ? "Administrator overview" : isManager ? "Operations overview" : "Club service overview";
+  const roleSummary = isAdmin
+    ? "Your complete view of club performance, people and resources."
+    : isManager
+      ? "Keep daily operations moving with the tools and information your team needs."
+      : "A live view of the club activity relevant to your role.";
+  const chartTotal = chart.reduce((sum, point) => sum + point.value, 0);
+  return <div className="dashboard-page">
+    <section className={`dashboard-hero ${isManager ? "manager" : ""}`}>
+      <div className="dashboard-hero-copy">
+        <span className="dashboard-role-tag"><i /> {roleTitle}</span>
+        <h2>Welcome back,<br /><strong>{firstName}.</strong></h2>
+        <p>{roleSummary}</p>
+        <div className="dashboard-hero-actions">
+          <button className="hero-primary" onClick={() => onNavigate("courts")}><CalendarDays size={16} /> Open court schedule</button>
+          {isAdmin && <button className="hero-secondary" onClick={() => onNavigate("settings")}><ShieldCheck size={16} /> Manage access</button>}
+        </div>
+      </div>
+      <div className="dashboard-hero-art"><img src="/court-illustration.svg" alt="Illustration of the club's outdoor court" /></div>
+      <div className="dashboard-hero-foot"><span><i /> LIVE CLUB DATA</span><span>{todayBookings} reservations today</span></div>
+    </section>
+    <div className="stats-grid dashboard-stats">{stats.map(({ title, value, note, icon: Icon }) =>
+      <article className="card stat-card" key={title}><div className="stat-top"><span>{title}</span><span className="stat-icon"><Icon size={18} /></span></div><strong className="stat-value">{value}</strong><small className="stat-note">{note}</small></article>)}</div>
+    <div className="dashboard-analytics-grid">
+      <section className="card chart-card">
+        <div className="card-header"><div><span className="eyebrow">{isAdmin ? "FINANCIAL PERFORMANCE" : "COURT ACTIVITY"}</span><h3>{isAdmin ? "Revenue pulse" : "Booking pulse"}</h3><p>Daily totals from the live club records</p></div>
+          <div className="chart-range" aria-label="Chart date range">{([7, 30] as const).map((days) =>
+            <button key={days} className={range === days ? "selected" : ""} onClick={() => setRange(days)} aria-pressed={range === days}>{days}D</button>)}</div>
+        </div>
+        <div className="chart-summary"><strong>{isAdmin ? money(chartTotal) : chartTotal}</strong><span>in the last {range} days</span></div>
+        <svg className="activity-chart" viewBox="0 0 640 220" role="img" aria-label={`${isAdmin ? "Revenue" : "Bookings"} over the last ${range} days`}>
+          <defs><linearGradient id="dashboard-chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#9dde71" stopOpacity=".4" /><stop offset="100%" stopColor="#9dde71" stopOpacity="0" /></linearGradient></defs>
+          {[45, 95, 145, 198].map((y) => <line key={y} x1="28" x2="612" y1={y} y2={y} className="chart-grid-line" />)}
+          <path d={chartArea} fill="url(#dashboard-chart-fill)" />
+          <polyline points={chartLine} className="chart-line" />
+          {chartPoints.filter((_, index) => range === 7 || index % 5 === 0 || index === chartPoints.length - 1)
+            .map((point) => <circle key={point.label} cx={point.x} cy={point.y} r="4" className="chart-point"><title>{point.label}: {isAdmin ? money(point.value) : point.value}</title></circle>)}
+        </svg>
+        <div className="chart-labels">{chart.filter((_, index) => range === 7 || index % 5 === 0 || index === chart.length - 1)
+          .map((point) => <span key={point.label}>{point.label}</span>)}</div>
       </section>
-      <section className="card"><div className="card-header"><div><h3>Attention needed</h3><p>Operational reminders from shared records.</p></div></div>
-        {lowStock.length === 0 && pendingInvoices === 0 && <p className="muted">Everything looks up to date.</p>}
-        {lowStock.map((product) => <div className="alert-row" key={text(product.id)}><Package size={17} /><span><strong>{text(product.name)}</strong><small>{text(product.stock)} units remaining</small></span><button onClick={() => onNavigate("shop")}>Review</button></div>)}
-        {pendingInvoices > 0 && <div className="alert-row"><CircleDollarSign size={17} /><span><strong>{pendingInvoices} unpaid invoices</strong><small>Review payments and due dates</small></span><button onClick={() => onNavigate("finance")}>Review</button></div>}
+      <section className="card court-load-card">
+        <div className="card-header"><div><span className="eyebrow">FACILITIES</span><h3>Court activity</h3><p>Confirmed bookings by court</p></div><span className="live-tag"><i /> LIVE</span></div>
+        {courtLoads.length ? <div className="court-load-list">{courtLoads.map((court) =>
+          <div className="court-load-row" key={court.name}><div><span>{court.name}</span><strong>{court.count}</strong></div><div className="court-load-track"><i style={{ width: `${(court.count / maximumCourtLoad) * 100}%` }} /></div></div>)}</div>
+          : <p className="empty-inline">Court activity will appear when reservations are recorded.</p>}
+        <button className="text-button court-load-link" onClick={() => onNavigate("courts")}>View schedule <ArrowRight size={14} /></button>
       </section>
     </div>
-  </>;
+    <div className="dashboard-bottom-grid">
+      <section className="card"><div className="card-header"><div><span className="eyebrow">LIVE OPERATIONS</span><h3>Recent bookings</h3><p>Reservations shared across the club</p></div><button className="text-button" onClick={() => onNavigate("courts")}>View all <ArrowRight size={14} /></button></div>
+        <DataTable rows={data.bookings.slice(0, 5)} empty="No court bookings yet." />
+      </section>
+      <section className="card attention-card"><div className="card-header"><div><span className="eyebrow">ACTION QUEUE</span><h3>Needs attention</h3><p>Follow up on these live records</p></div><span className="attention-count">{lowStock.length + (isAdmin ? pendingInvoices : pendingLeave + openEnquiries)}</span></div>
+        {lowStock.map((product) => <div className="alert-row" key={text(product.id)}><Package size={17} /><span><strong>{text(product.name)}</strong><small>{text(product.stock)} units remaining</small></span><button onClick={() => onNavigate("shop")}>Review</button></div>)}
+        {isAdmin && pendingInvoices > 0 && <div className="alert-row"><CircleDollarSign size={17} /><span><strong>{pendingInvoices} unpaid invoices</strong><small>Review payments and due dates</small></span><button onClick={() => onNavigate("finance")}>Review</button></div>}
+        {!isAdmin && pendingLeave > 0 && <div className="alert-row"><Users size={17} /><span><strong>{pendingLeave} leave requests</strong><small>Waiting for a manager decision</small></span><button onClick={() => onNavigate("staff")}>Review</button></div>}
+        {!isAdmin && openEnquiries > 0 && <div className="alert-row"><ClipboardList size={17} /><span><strong>{openEnquiries} open enquiries</strong><small>Prospects need a follow-up</small></span><button onClick={() => onNavigate("enquiries")}>Review</button></div>}
+        {lowStock.length === 0 && (isAdmin ? pendingInvoices : pendingLeave + openEnquiries) === 0 && <p className="muted">Everything is up to date.</p>}
+      </section>
+    </div>
+  </div>;
+}
+
+function todayValueFor(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function DataTable({ rows, empty }: { rows: DemoRow[]; empty: string }) {
@@ -583,16 +679,21 @@ function formatCell(value: unknown) {
   return text(value);
 }
 
-function AdminModule({ view, data, saving, onCreate, onUpdate }: {
+function AdminModule({ view, data, saving, onCreate, onUpdate, role }: {
   view: ViewKey; data: DemoState; saving: boolean; onCreate: (key: ModuleKey, record: DemoRow) => Promise<void>;
   onUpdate: (key: ModuleKey, id: unknown, update: Partial<DemoRow>) => Promise<void>;
+  role: DemoRole;
 }) {
   const config = moduleConfig[view];
   const [search, setSearch] = useState("");
   const [createKey, setCreateKey] = useState<ModuleKey | null>(null);
   if (!config) return null;
   const keys = config.arrays;
-  const canCreate = Boolean(config.fields?.length && keys[0] && !["notifications", "reports", "settings"].includes(view));
+  const managerCreatable = new Set<ModuleKey>(["menu", "enquiries"]);
+  const canCreate = Boolean(config.fields?.length && keys[0] &&
+    (role === "admin" || (role === "manager" && managerCreatable.has(keys[0]))) &&
+    !["notifications", "reports", "settings"].includes(view));
+  const canReviewLeave = role === "admin" || role === "manager";
   const shown = (rows: DemoRow[]) => rows.filter((row) => Object.values(row).some((value) => text(value).toLowerCase().includes(search.toLowerCase())));
   return <><div className="welcome-row"><div><span className="eyebrow">OPERATIONS</span><h2>{config.title}</h2><p>Manage club records using shared, live data.</p></div>{canCreate && <button className="primary-button" onClick={() => setCreateKey(keys[0])}>+ Add record</button>}</div>
     {view === "shop" && <div className="notice-card"><Package size={18} /> Product stock, catalog, and orders are synchronized with the visitor-facing catalog.</div>}
@@ -600,17 +701,73 @@ function AdminModule({ view, data, saving, onCreate, onUpdate }: {
     {view === "reports" && <div className="notice-card"><ClipboardList size={18} /> Reports are based on recorded transactions, expenses, and invoice payments.</div>}
     {view !== "settings" && <div className="toolbar"><label className="search-box"><Search size={17} /><input placeholder={`Search ${config.title.toLowerCase()}`} value={search} onChange={(event) => setSearch(event.target.value)} /></label><span className="record-count">{keys.reduce((total: number, key) => total + data[key].length, 0)} records</span></div>}
     <div className="module-grid">{keys.map((key) => <section className="card" key={key}><div className="card-header"><div><h3>{labelFor(key)}</h3><p>{data[key].length} shared records</p></div>
-      {key === "leave" && data[key].some((row) => row.status === "Pending") && <span className="status-pill warning">Needs review</span>}</div>
-      {key === "leave" ? <LeaveTable rows={shown(data[key])} onUpdate={(id, patch) => onUpdate(key, id, patch)} /> : <DataTable rows={shown(data[key])} empty={`No ${labelFor(key).toLowerCase()} to display.`} />}
+      {key === "leave" && canReviewLeave && data[key].some((row) => row.status === "Pending") && <span className="status-pill warning">Needs review</span>}</div>
+      {key === "leave" ? <LeaveTable rows={shown(data[key])} canManage={canReviewLeave} onUpdate={(id, patch) => onUpdate(key, id, patch)} /> : <DataTable rows={shown(data[key])} empty={`No ${labelFor(key).toLowerCase()} to display.`} />}
     </section>)}</div>
     {createKey && config.fields && <RecordDialog key={createKey} moduleKey={createKey} fields={config.fields} saving={saving} onClose={() => setCreateKey(null)} onSave={async (record) => {
       await onCreate(createKey, { id: `${prefixFor(createKey)}-${Date.now()}`, ...record });
       setCreateKey(null);
     }} />}
-    {view === "settings" && <div className="notice-card"><Settings size={18} /> Settings access is restricted to administrators. Plans and facility information are visible here; use the dedicated API for sensitive configuration.</div>}
+    {view === "settings" && <><div className="notice-card"><Settings size={18} /> Administrator controls for access and club configuration. Changes to sensitive operational records are permission-checked by the API.</div><AccountProvisioningCard /></>}
     {view === "assistant" && <p className="muted">Assistant is ready.</p>}
     {saving && <span className="sr-only" role="status">Saving shared data</span>}
   </>;
+}
+
+function AccountProvisioningCard() {
+  const [values, setValues] = useState({
+    fullName: "",
+    email: "",
+    password: "",
+    phone: "",
+    role: "front_desk" as Exclude<DemoRole, "visitor">,
+  });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+    setSaving(true);
+    try {
+      const response = await apiRequest<ApiEnvelope<{ fullName: string; email: string; role: string }>>(
+        "/api/v1/auth/accounts",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            fullName: values.fullName.trim(),
+            email: values.email.trim(),
+            password: values.password,
+            role: values.role,
+            ...(values.phone ? { phone: values.phone.trim() } : {}),
+          }),
+        },
+      );
+      setMessage(`Created ${response.data.fullName} as ${response.data.role.replace("_", " ")}.`);
+      setValues({ fullName: "", email: "", password: "", phone: "", role: "front_desk" });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the account");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <section className="card account-provisioning">
+    <div className="card-header"><div><span className="eyebrow">ACCESS MANAGEMENT</span><h3>Create a staff account</h3><p>New users receive access based on the role selected below.</p></div><span className="account-shield"><ShieldCheck size={19} /></span></div>
+    <form className="account-form" onSubmit={(event) => void submit(event)}>
+      <label className="form-field">Full name<input required minLength={2} maxLength={120} value={values.fullName} onChange={(event) => setValues({ ...values, fullName: event.target.value })} /></label>
+      <label className="form-field">Email address<input required type="email" maxLength={254} autoComplete="off" value={values.email} onChange={(event) => setValues({ ...values, email: event.target.value })} /></label>
+      <label className="form-field">Initial password<input required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={values.password} onChange={(event) => setValues({ ...values, password: event.target.value })} /><small>Use at least 12 characters and share it through a secure channel.</small></label>
+      <label className="form-field">Role<select value={values.role} onChange={(event) => setValues({ ...values, role: event.target.value as Exclude<DemoRole, "visitor"> })}>
+        <option value="front_desk">Front desk</option><option value="staff">Staff</option><option value="manager">Manager</option><option value="admin">Administrator</option><option value="member">Member</option>
+      </select></label>
+      {values.role === "member" && <label className="form-field">Phone number<input required minLength={7} maxLength={20} value={values.phone} onChange={(event) => setValues({ ...values, phone: event.target.value })} /></label>}
+      <div className="account-form-footer"><p>Passwords are stored as secure hashes, never as plain text.</p><button className="primary-button" disabled={saving}>{saving ? "Creating…" : "Create account"}</button></div>
+    </form>
+    {message && <p className="account-feedback" role="status">{message}</p>}
+    {error && <p className="login-error account-error" role="alert">{error}</p>}
+    <div className="access-levels"><article><strong>Administrator</strong><span>Full access, finance, configuration and account management.</span></article><article><strong>Manager</strong><span>Daily operations and staff review; no finance changes or system settings.</span></article></div>
+  </section>;
 }
 
 function labelFor(key: string) {
@@ -620,10 +777,10 @@ function prefixFor(key: string) {
   return ({ members: "M", courts: "C", products: "P", menu: "F", enquiries: "E", staff: "S" } as Record<string, string>)[key] ?? key.slice(0, 3).toUpperCase();
 }
 
-function LeaveTable({ rows, onUpdate }: { rows: DemoRow[]; onUpdate: (id: unknown, patch: Partial<DemoRow>) => Promise<void> }) {
+function LeaveTable({ rows, onUpdate, canManage }: { rows: DemoRow[]; onUpdate: (id: unknown, patch: Partial<DemoRow>) => Promise<void>; canManage: boolean }) {
   if (!rows.length) return <p className="empty-inline">No leave requests to display.</p>;
-  return <div className="table-wrap"><table className="data-table"><thead><tr><th>Staff</th><th>Dates</th><th>Reason</th><th>Status</th><th>Review</th></tr></thead><tbody>
-    {rows.map((row, index) => <tr key={text(row.id) === "—" ? index : text(row.id)}><td>{text(row.name)}</td><td>{text(row.dates)}</td><td>{text(row.reason)}</td><td>{text(row.status)}</td><td>{row.status === "Pending" ? <div className="inline-actions"><button onClick={() => void onUpdate(row.id, { status: "Approved" })}>Approve</button><button onClick={() => void onUpdate(row.id, { status: "Rejected" })}>Reject</button></div> : "—"}</td></tr>)}
+  return <div className="table-wrap"><table className="data-table"><thead><tr><th>Staff</th><th>Dates</th><th>Reason</th><th>Status</th>{canManage && <th>Review</th>}</tr></thead><tbody>
+    {rows.map((row, index) => <tr key={text(row.id) === "—" ? index : text(row.id)}><td>{text(row.name)}</td><td>{text(row.dates)}</td><td>{text(row.reason)}</td><td>{text(row.status)}</td>{canManage && <td>{row.status === "Pending" ? <div className="inline-actions"><button onClick={() => void onUpdate(row.id, { status: "Approved" })}>Approve</button><button onClick={() => void onUpdate(row.id, { status: "Rejected" })}>Reject</button></div> : "—"}</td>}</tr>)}
   </tbody></table></div>;
 }
 
@@ -653,7 +810,7 @@ function RecordDialog({ moduleKey, fields, saving, onClose, onSave }: {
   </div>;
 }
 
-function AdminCourts({ data, onBook, notify, saving }: { data: DemoState; onBook: (courtId: string, date: string, time: string) => Promise<void>; notify: (message: string) => void; saving: boolean }) {
+function AdminCourts({ data, onBook, notify, saving, canManage }: { data: DemoState; onBook: (courtId: string, date: string, time: string) => Promise<void>; notify: (message: string) => void; saving: boolean; canManage: boolean }) {
   const [date, setDate] = useState(todayValue());
   const [courtId, setCourtId] = useState(String(data.courts.find((court) => court.status === "Available")?.id ?? ""));
   const [selectedTime, setSelectedTime] = useState("");
@@ -669,11 +826,11 @@ function AdminCourts({ data, onBook, notify, saving }: { data: DemoState; onBook
     <div className="schedule-controls"><label>Date<input type="date" min={todayValue()} value={date} onChange={(event) => { setDate(event.target.value); setSelectedTime(""); }} /></label><label>Court<select value={courtId} onChange={(event) => setCourtId(event.target.value)}>{courts.map((court) => <option key={String(court.id)} value={String(court.id)}>{text(court.name)}</option>)}</select></label></div>
     <div className="slot-grid">{bookingTimes.map((time) => {
       const booked = isSlotBooked(activeBookings, courtId, date, time);
-      return <button key={time} className={`slot-card ${booked ? "booked" : ""} ${selectedTime === time ? "selected" : ""}`} disabled={booked} onClick={() => setSelectedTime(time)}>
+      return <button key={time} className={`slot-card ${booked ? "booked" : ""} ${selectedTime === time ? "selected" : ""}`} disabled={booked || !canManage} onClick={() => setSelectedTime(time)}>
         <span>{booked ? "Reserved" : "Available"}</span><strong>{time}</strong>{selectedTime === time && <Check size={16} />}
       </button>;
     })}</div>
-    <div className="booking-action"><span>{selectedCourt ? `${text(selectedCourt.name)} · ${money(selectedCourt.price)} / hour` : "No available courts"}</span><button className="primary-button" disabled={!selectedTime || busyOrSaving(saving)} onClick={() => void makeBooking()}>{saving ? "Saving…" : "Confirm booking"}</button></div>
+    {canManage && <div className="booking-action"><span>{selectedCourt ? `${text(selectedCourt.name)} · ${money(selectedCourt.price)} / hour` : "No available courts"}</span><button className="primary-button" disabled={!selectedTime || busyOrSaving(saving)} onClick={() => void makeBooking()}>{saving ? "Saving…" : "Confirm booking"}</button></div>}
     <section className="card"><div className="card-header"><div><h3>Shared reservations</h3><p>New bookings appear here immediately after confirmation.</p></div></div><DataTable rows={data.bookings} empty="No bookings for the selected club yet." /></section>
   </>;
 }
@@ -693,7 +850,7 @@ function PublicPortal({ memberMode, member, data, status, selectedView, setSelec
     <header className="public-header"><a className="brand public-brand" href="/"><span className="brand-mark">P</span><span><strong>PlayPulse</strong><small>Champions Club</small></span></a>
       <nav aria-label="Club navigation">{(memberMode ? ["home", "courts", "shop", "plans", "bookings", "account"] : ["home", "courts", "shop", "plans", "club"]).map((view) =>
         <button key={view} className={selectedView === view ? "active" : ""} onClick={() => setSelectedView(view)}>{view === "home" ? "Home" : view === "plans" ? "Membership" : view === "club" ? "The club" : view[0].toUpperCase() + view.slice(1)}</button>)}</nav>
-      <div className="header-actions"><SyncIndicator status={status} saving={busy} />{memberMode ? <button className="account-button" onClick={() => void onLogout()}><LogOut size={15} /> Log out</button> : <a className="account-button" href="/">Member login</a>}</div>
+      <div className="header-actions"><SyncIndicator status={status} saving={busy} />{memberMode ? <button className="account-button" onClick={() => void onLogout()}><LogOut size={15} /> Log out</button> : <a className="account-button" href="/login">Sign in</a>}</div>
     </header>
     {selectedView === "home" ? <PublicHome memberMode={memberMode} member={member} data={data} setView={setSelectedView} /> :
       selectedView === "courts" ? <PublicCourts data={data} onBook={onBook} busy={busy} notify={notify} /> :
@@ -702,7 +859,7 @@ function PublicPortal({ memberMode, member, data, status, selectedView, setSelec
       selectedView === "bookings" && memberMode ? <MemberBookings data={data} member={member} setView={setSelectedView} /> :
       selectedView === "account" && memberMode ? <MemberAccount member={member} /> :
       <ClubOverview />}
-    <footer className="public-footer"><div><strong>Champions Club</strong><span>Where every match begins.</span></div><div>Mon–Sun · 6:00 AM–10:00 PM</div><div>hello@champions.club</div></footer>
+    <footer className="public-footer"><div><strong>Champions Club</strong><span>Where every match begins.</span></div></footer>
     {toast && <div className="toast-message" role="status">{toast}</div>}
   </div>;
 }
@@ -718,7 +875,7 @@ function PublicHome({ memberMode, member, data, setView }: { memberMode: boolean
 
 function MemberSummary({ member, data, setView }: { member: PublicState["member"]; data: PublicState | null; setView: (view: string) => void }) {
   const bookings = data?.memberBookings ?? [];
-  return <section className="member-summary"><div><span className="eyebrow">MEMBER OVERVIEW</span><h2>{member?.plan ?? "Member"} membership</h2><p>{member ? `ID ${member.id} · valid through ${displayDate(member.expiry)}` : "Membership details are not available."}</p></div><div className="summary-stats"><div><strong>{bookings.length}</strong><span>bookings</span></div><div><strong>{money(member?.balance)}</strong><span>account balance</span></div></div><button className="secondary-button" onClick={() => setView("bookings")}>My bookings</button></section>;
+  return <section className="member-summary"><div><span className="eyebrow">MEMBER OVERVIEW</span><h2>{member?.plan ?? "Member"} membership</h2><p>{member ? `ID ${member.id}${member.expiry ? ` · valid through ${displayDate(member.expiry)}` : ""}` : "Membership details are not available."}</p></div><div className="summary-stats"><div><strong>{bookings.length}</strong><span>bookings</span></div><div><strong>{member?.balance == null ? "—" : money(member.balance)}</strong><span>account balance</span></div></div><button className="secondary-button" onClick={() => setView("bookings")}>My bookings</button></section>;
 }
 
 function PublicCourts({ data, onBook, busy, notify }: { data: PublicState | null; onBook: (courtId: string, date: string, time: string) => Promise<void>; busy: boolean; notify: (message: string) => void }) {
@@ -761,7 +918,7 @@ function PublicPlans({ data }: { data: PublicState | null }) {
 function MemberBookings({ data, member, setView }: { data: PublicState | null; member: PublicState["member"]; setView: (view: string) => void }) {
   const courtName = (id: string) => data?.courts.find((court) => court.id === id)?.name ?? "Court";
   return <main className="public-section"><div className="section-title"><div><span className="eyebrow">YOUR ACCOUNT</span><h2>My bookings</h2><p>{member?.name ?? "Member"} · upcoming reservations</p></div><button className="primary-button" onClick={() => setView("courts")}>Book a court</button></div>
-    <div className="card"><DataTable rows={(data?.memberBookings ?? []).map((booking, index) => ({ id: `booking-${index}`, court: courtName(booking.courtId), date: displayDate(booking.date), time: booking.time, status: booking.status }))} empty="You have no upcoming bookings." /></div>
+    <div className="card"><DataTable rows={(data?.memberBookings ?? []).map((booking, index) => ({ id: `booking-${index}`, court: booking.courtName ?? courtName(booking.courtId), date: displayDate(booking.date), time: booking.time, status: booking.status }))} empty="You have no upcoming bookings." /></div>
     <section className="member-orders"><h3>Recent orders</h3><div className="card"><DataTable rows={(data?.memberOrders ?? [])} empty="No recent shop orders." /></div></section>
   </main>;
 }
@@ -771,7 +928,7 @@ function MemberAccount({ member }: { member: PublicState["member"] }) {
     <section className="member-account card">{[
       ["Member", member?.name], ["Member ID", member?.id], ["Plan", member?.plan],
       ["Renewal date", member?.expiry ? displayDate(member.expiry) : null], ["Phone", member?.phone],
-      ["Outstanding balance", money(member?.balance)],
+      ["Outstanding balance", member?.balance == null ? null : money(member.balance)],
     ].map(([label, value]) => <div className="member-row" key={label}><span>{label}</span><strong>{value ?? "Details unavailable"}</strong></div>)}</section>
   </main>;
 }

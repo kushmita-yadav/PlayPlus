@@ -43,12 +43,17 @@ INSERT INTO permissions (code, description) VALUES
   ('members.write', 'Create and update member records'),
   ('auth.admin', 'Manage administrator accounts'),
   ('memberships.manage', 'Manage membership plans and renewals'),
+  ('membership_plans.manage', 'Manage membership plan configuration and pricing'),
   ('courts.manage', 'Manage courts and reservations'),
+  ('courts.configure', 'Configure court facilities and pricing'),
   ('shop.manage', 'Manage shop catalog and inventory'),
+  ('shop.catalog', 'Configure shop products and pricing'),
   ('bar.manage', 'Manage bar and cafeteria operations'),
   ('finance.read', 'View financial reports'),
   ('finance.manage', 'Manage invoices and expenses'),
-  ('staff.manage', 'Manage staff and leave')
+  ('staff.manage', 'Manage staff and leave'),
+  ('staff.provision', 'Create staff profiles and compensation records'),
+  ('payroll.manage', 'Manage payroll records')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO role_permissions (role_id, permission_id)
@@ -59,7 +64,7 @@ JOIN permissions p ON (
   OR (r.name = 'staff' AND p.code IN ('members.read', 'courts.manage', 'shop.manage', 'bar.manage'))
   OR (r.name = 'manager' AND p.code IN (
     'members.read', 'members.write', 'memberships.manage', 'courts.manage',
-    'shop.manage', 'bar.manage', 'finance.read', 'finance.manage', 'staff.manage'
+    'shop.manage', 'bar.manage', 'finance.read', 'staff.manage'
   ))
   OR (r.name = 'admin')
 )

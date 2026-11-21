@@ -9,6 +9,18 @@ const envSchema = z.object({
   CLUB_TIMEZONE: z.string().default("Asia/Kolkata"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   DATABASE_SSL: z.enum(["true", "false"]).default("false"),
+  DATABASE_SSL_REJECT_UNAUTHORIZED: z.enum(["true", "false"]).default("true"),
+}).superRefine((value, context) => {
+  if (value.NODE_ENV !== "production") return;
+  if (!value.DATABASE_URL) {
+    context.addIssue({ code: "custom", path: ["DATABASE_URL"], message: "is required in production" });
+  }
+  if (!value.JWT_SECRET) {
+    context.addIssue({ code: "custom", path: ["JWT_SECRET"], message: "is required in production" });
+  }
+  if (value.DATABASE_SSL !== "true") {
+    context.addIssue({ code: "custom", path: ["DATABASE_SSL"], message: "must be enabled in production" });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);

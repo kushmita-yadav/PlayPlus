@@ -13,9 +13,9 @@ import {
   registerAccount,
   registerSchema,
   requireAuth,
+  requirePermission,
   signToken,
   createUiSession,
-  readUiSession,
 } from "./auth.js";
 
 export const authRouter: Router = createRouter();
@@ -44,59 +44,21 @@ authRouter.post("/register", async (req, res, next) => {
   }
 });
 
-authRouter.post("/demo-login", async (req, res, next) => {
+authRouter.post("/accounts", requireAuth, requirePermission("auth.admin"), async (req, res, next) => {
   try {
     const input = z.object({
-      email: z.string().email(),
-      password: z.string().min(1),
-      role: z.enum(["admin", "member", "visitor"]),
+      email: z.string().email().max(254),
+      password: z.string().min(12).max(128),
+      fullName: z.string().trim().min(2).max(120),
+      phone: z.string().trim().min(7).max(20).optional(),
+      dateOfBirth: z.string().date().optional(),
+      role: z.enum(["member", "front_desk", "staff", "manager", "admin"]),
     }).parse(req.body);
-    const accounts = {
-      admin: { email: "admin@champions.club", password: "Admin@123", name: "Alex Kumar" },
-      member: { email: "member@champions.club", password: "Member@123", name: "Aarav Mehta" },
-      visitor: { email: "visitor@champions.club", password: "Visitor@123", name: "Visitor" },
-    };
-    if (input.role === "visitor") {
-      const session = createUiSession("visitor", "Visitor", "visitor@champions.club");
-      setUiSessionCookie(res, session);
-      res.status(200).json({ success: true, data: { role: "visitor", name: "Visitor" } });
-      return;
-    }
-    const account = accounts[input.role];
-    if (input.email.toLowerCase() !== account.email || input.password !== account.password) {
-      throw new ApiError(401, "Invalid demo credentials", "INVALID_DEMO_CREDENTIALS");
-    }
-    const session = createUiSession(input.role, account.name, account.email);
-    setUiSessionCookie(res, session);
-    res.status(200).json({
-      success: true,
-      data: { role: input.role, name: account.name, email: account.email },
-    });
+    const account = await registerAccount(input);
+    res.status(201).json({ success: true, data: account });
   } catch (error) {
     next(error);
   }
-});
-
-authRouter.post("/demo-logout", (_req, res) => {
-  clearUiSessionCookie(res);
-  res.status(200).json({ success: true, data: { signedOut: true } });
-});
-
-authRouter.get("/demo-session", (req, res) => {
-  const cookie = req.headers.cookie?.split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith("playpulse_ui="))
-    ?.slice("playpulse_ui=".length);
-  const session = readUiSession(cookie);
-  res.setHeader("Cache-Control", "no-store");
-  res.status(200).json({
-    success: true,
-    data: session ? {
-      role: session.role,
-      name: session.name,
-      email: session.email,
-    } : null,
-  });
 });
 
 authRouter.post("/login", async (req, res, next) => {

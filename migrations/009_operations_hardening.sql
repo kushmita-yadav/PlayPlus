@@ -153,10 +153,6 @@ CREATE TABLE IF NOT EXISTS receipt_records (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-INSERT INTO tax_rates (code, name, rate_percent, applies_from)
-VALUES ('GST_ESTIMATE', 'Configurable GST estimate', 18, CURRENT_DATE)
-ON CONFLICT (code) DO NOTHING;
-
 INSERT INTO ledger_accounts (code, name, account_type) VALUES
   ('1000', 'Cash and equivalents', 'asset'),
   ('1100', 'Accounts receivable', 'asset'),

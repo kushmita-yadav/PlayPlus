@@ -200,7 +200,7 @@ cafeteriaRouter.post("/orders", requireAuth, requirePermission("bar.manage"), as
       `INSERT INTO cafeteria_orders
          (order_number, tab_id, table_id, member_id, guest_name, status,
             subtotal, discount_amount, total_amount, idempotency_key, created_by, notes)
-         VALUES ($1,$2,$3,$4,$5,'placed',$6,$7,$8,$9,$10,$11,$12)
+         VALUES ($1,$2,$3,$4,$5,'placed',$6,$7,$8,$9,$10,$11)
        RETURNING *`,
       [orderNumber, input.tabId ?? null, input.tableId ?? null, input.memberId ?? null,
        input.guestName ?? null, subtotal, discountAmount, subtotal - discountAmount,
