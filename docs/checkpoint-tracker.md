@@ -6,7 +6,7 @@
 | 1 - Backend foundation and database | PASSED |
 | 2 - Authentication and authorization | PASSED |
 | 3 - Membership management | PASSED |
-| 4 - Court booking engine | NOT STARTED |
+| 4 - Court booking engine | PASSED |
 | 5 - Sports shop and inventory | NOT STARTED |
 | 6 - Cafeteria and bar | NOT STARTED |
 | 7 - Enquiries, staff, and financial operations | NOT STARTED |

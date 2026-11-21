@@ -4,6 +4,7 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { env } from "../src/config/env.js";
 import { signToken } from "../src/auth/auth.js";
+import { validateBookingStart } from "../src/courts/routes.js";
 import type { AuthUser } from "../src/auth/auth.js";
 
 const app = createApp();
@@ -43,6 +44,15 @@ test("admin role cannot be self-assigned during registration", async () => {
 
   test("protected member benefits reject missing authentication", async () => {
     await request(app).get("/api/v1/memberships/members/example/benefits").expect(401);
+  });
+
+  test("court reservation rejects missing authentication", async () => {
+    await request(app).post("/api/v1/courts/reservations").send({}).expect(401);
+  });
+
+  test("court start validation accepts 30-minute intervals", () => {
+    assert.equal(validateBookingStart(new Date("2026-11-21T18:30:00.000Z")), true);
+    assert.equal(validateBookingStart(new Date("2026-11-21T18:15:00.000Z")), false);
   });
   assert.ok([400, 403].includes(response.status));
 });
