@@ -53,3 +53,23 @@ Exports support CSV, XLSX, and PDF. Report types include performance, invoices, 
 ## Notifications
 
 The notification subsystem includes an outbox, in-app delivery, membership-expiry reminders, low-stock reminders, booking notifications, payment receipts, cancellation notifications, and external-provider status boundaries. Real email/SMS delivery requires a provider credential and transport adapter.
+
+## React frontend integration status
+
+The React/Vite frontend is built and served by Express. Its current Admin workspace reads and writes
+the versioned `shared_demo_state` JSON document, and public booking uses that same snapshot. This is
+PostgreSQL-backed demo synchronization, but it does not make the React screens use the normalized
+membership, court, shop, cafeteria, staff, and finance tables.
+
+The UI's demo sign-in also uses `/api/v1/auth/demo-login` and a UI session cookie, while normalized
+domain APIs require the JWT returned by `/api/v1/auth/login`. The React app does not currently use
+that JWT authentication flow. Therefore the React demo experience works with shared snapshot data,
+but full frontend integration with the relational domain APIs is still pending.
+
+Remaining integration work:
+
+- Connect React sign-in/session lifecycle to database-backed accounts and JWT authentication.
+- Replace demo-snapshot reads and writes with typed, permission-checked domain API calls.
+- Add any missing domain read/list operations required by the existing screens.
+- Verify cross-client updates for normalized domain changes, not only snapshot changes.
+- Add PostgreSQL concurrency tests for simultaneous membership renewals and daily session limits.

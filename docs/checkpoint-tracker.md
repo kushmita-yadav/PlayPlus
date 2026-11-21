@@ -14,4 +14,6 @@
 | 9 - Quality, testing, and security | PASSED |
 | 10 - Render deployment | BLOCKED |
 | 11 - Documentation and submission readiness | PASSED |
-| Remaining demo, monitoring, exports, concurrency, and notifications | IMPLEMENTED |
+| Demo data, monitoring, exports, and notifications backend | IMPLEMENTED |
+| React UI integration with normalized domain APIs and JWT auth | PENDING |
+| Concurrent membership renewal and daily-session-limit tests | PENDING |

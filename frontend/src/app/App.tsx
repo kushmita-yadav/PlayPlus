@@ -4,7 +4,9 @@ import {
   ClipboardList, Coffee, Dumbbell, LayoutDashboard, LogOut, Menu, Package, Search, Settings,
   ShieldCheck, ShoppingBag, Sparkles, Users, X,
 } from "lucide-react";
-import { apiRequest, ApiRequestError, type ApiEnvelope } from "../lib/api";
+import {
+  apiRequest, ApiRequestError, clearAuthTokens, getRefreshToken, saveAuthTokens, type ApiEnvelope,
+} from "../lib/api";
 import { initialDemoState } from "../data/demo-state";
 import { bookingTimes, isSlotBooked } from "../lib/booking.js";
 import type { Booking } from "../lib/booking.js";
@@ -95,9 +97,19 @@ function useDemoSession() {
 
   useEffect(() => {
     let active = true;
-    void apiRequest<ApiEnvelope<DemoSession | null>>("/api/v1/auth/demo-session")
-      .then((response) => { if (active) setSession(response.data); })
-      .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not check the sign-in session"); })
+    void apiRequest<ApiEnvelope<{ email: string; fullName: string; role: DemoRole }>>("/api/v1/auth/me")
+      .then((response) => {
+        if (active) setSession({
+          email: response.data.email,
+          name: response.data.fullName,
+          role: response.data.role,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (active && !(cause instanceof ApiRequestError && cause.status === 401)) {
+          setError(cause instanceof Error ? cause.message : "Could not check the sign-in session");
+        }
+      })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
@@ -291,7 +303,12 @@ function App() {
 
   const signOut = async () => {
     try {
-      await apiRequest<ApiEnvelope<{ signedOut: boolean }>>("/api/v1/auth/demo-logout", { method: "POST" });
+      const refreshToken = getRefreshToken();
+      await apiRequest<ApiEnvelope<{ signedOut: boolean }>>("/api/v1/auth/logout", {
+        method: "POST",
+        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+      });
+      clearAuthTokens();
       setSession(null);
       window.location.assign("/");
     } catch (cause) {
@@ -299,14 +316,23 @@ function App() {
     }
   };
 
-  const signIn = async (email: string, password: string, role: "admin" | "member" | "visitor") => {
+  const signIn = async (email: string, password: string) => {
     setBusy(true);
     try {
-      const response = await apiRequest<ApiEnvelope<DemoSession>>("/api/v1/auth/demo-login", {
-        method: "POST", body: JSON.stringify({ email, password, role }),
+      const response = await apiRequest<ApiEnvelope<{
+        accessToken: string;
+        refreshToken: string;
+        user: { email: string; fullName: string; role: DemoRole };
+      }>>("/api/v1/auth/login", {
+        method: "POST", body: JSON.stringify({ email, password }),
       });
-      setSession(response.data);
-      window.location.assign(role === "admin" ? "/admin" : role === "member" ? "/portal?mode=member" : "/visitor");
+      saveAuthTokens(response.data);
+      setSession({
+        email: response.data.user.email,
+        name: response.data.user.fullName,
+        role: response.data.user.role,
+      });
+      window.location.assign(response.data.user.role === "member" ? "/portal?mode=member" : "/admin");
     } finally {
       setBusy(false);
     }
@@ -340,8 +366,8 @@ function App() {
       setRoleChoice={setRoleChoice}
       busy={busy}
       error={error}
-      onSignIn={(email, password) => signIn(email, password, roleChoice)}
-      onVisitor={() => signIn("visitor@champions.club", "Visitor@123", "visitor")}
+      onSignIn={signIn}
+      onVisitor={async () => { window.location.assign("/visitor"); }}
     />;
   }
   if (path === "/visitor" || path === "/portal") {

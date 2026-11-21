@@ -364,6 +364,9 @@ Then open `http://localhost:3000`. Backend health and API documentation are avai
 
 ### Demo accounts
 
+Run the migrations and seed the database with `npm.cmd run migrate` and `npm.cmd run db:seed`
+before using the admin or member demo account. These credentials authenticate against PostgreSQL.
+
 | Experience | Email | Password |
 |---|---|---|
 | Admin dashboard | `admin@champions.club` | `Admin@123` |
@@ -580,9 +583,8 @@ npm.cmd run db:seed
 
 Seed credentials are only for local demonstration:
 
-- Admin: `admin@champions.local`
-- Member: `member@champions.local`
-- Password: `DemoPassword123!`
+- Admin: `admin@champions.club` / `Admin@123`
+- Member: `member@champions.club` / `Member@123`
 
 ### Database Backup and Restore
 

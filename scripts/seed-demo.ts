@@ -8,25 +8,33 @@ try {
   await client.query("BEGIN");
   await client.query("SELECT 1");
 
-  const passwordHash = await bcrypt.hash("DemoPassword123!", 12);
+  const adminPasswordHash = await bcrypt.hash("Admin@123", 12);
+  const memberPasswordHash = await bcrypt.hash("Member@123", 12);
   await client.query(
     `INSERT INTO accounts (email, password_hash, full_name, role_id)
      SELECT $1,$2,$3,r.id FROM roles r WHERE r.name='admin'
-     ON CONFLICT (email) DO UPDATE SET full_name=EXCLUDED.full_name`,
-    ["admin@champions.local", passwordHash, "Champions Club Admin"],
+     ON CONFLICT (email) DO UPDATE SET
+       password_hash=EXCLUDED.password_hash, full_name=EXCLUDED.full_name, role_id=EXCLUDED.role_id`,
+    ["admin@champions.club", adminPasswordHash, "Champions Club Admin"],
   );
-  await client.query(
+  const memberAccount = await client.query(
     `INSERT INTO accounts (email, password_hash, full_name, role_id)
      SELECT $1,$2,$3,r.id FROM roles r WHERE r.name='member'
-     ON CONFLICT (email) DO UPDATE SET full_name=EXCLUDED.full_name`,
-    ["member@champions.local", passwordHash, "Demo Member"],
+     ON CONFLICT (email) DO UPDATE SET
+       password_hash=EXCLUDED.password_hash, full_name=EXCLUDED.full_name, role_id=EXCLUDED.role_id
+     RETURNING id`,
+    ["member@champions.club", memberPasswordHash, "Aarav Mehta"],
   );
 
   const member = await client.query(
-    `INSERT INTO members (member_number, full_name, phone, email, date_of_birth)
-     VALUES ('CC-DEMO-001','Demo Member','9876543210','member@champions.local','2000-01-01')
-     ON CONFLICT (member_number) DO UPDATE SET full_name=EXCLUDED.full_name
+    `INSERT INTO members (account_id, member_number, full_name, phone, email, date_of_birth)
+     VALUES ($1,'CC-DEMO-001','Aarav Mehta','9876543210','member@champions.club','2000-01-01')
+     ON CONFLICT (member_number) DO UPDATE SET
+       account_id=EXCLUDED.account_id,
+       full_name=EXCLUDED.full_name,
+       email=EXCLUDED.email
      RETURNING id`,
+    [memberAccount.rows[0].id],
   );
   const gold = await client.query("SELECT id FROM membership_plans WHERE code='GOLD'");
   if (gold.rowCount) {
@@ -117,8 +125,8 @@ try {
   await client.query(
     `INSERT INTO members (member_number,full_name,phone,email,date_of_birth)
      VALUES
-       ('CC-DEMO-002','Silver Demo','9876543211','silver@champions.local','1995-05-15'),
-       ('CC-DEMO-003','Junior Demo','9876543212','junior@champions.local','2012-08-20')
+       ('CC-DEMO-002','Silver Demo','9876543211','silver@champions.club','1995-05-15'),
+       ('CC-DEMO-003','Junior Demo','9876543212','junior@champions.club','2012-08-20')
      ON CONFLICT (member_number) DO UPDATE SET full_name=EXCLUDED.full_name`,
   );
 
@@ -195,9 +203,8 @@ try {
 
   await client.query("COMMIT");
   console.log("Demo data seeded");
-  console.log("Admin: admin@champions.local");
-  console.log("Member: member@champions.local");
-  console.log("Demo password: DemoPassword123!");
+  console.log("Admin: admin@champions.club / Admin@123");
+  console.log("Member: member@champions.club / Member@123");
 } catch (error) {
   await client.query("ROLLBACK");
   throw error;

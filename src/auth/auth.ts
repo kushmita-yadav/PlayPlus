@@ -103,6 +103,7 @@ export function signToken(user: AuthUser): string {
   return jwt.sign({
     sub: user.id,
     email: user.email,
+    fullName: user.fullName,
     role: user.role,
     permissions: user.permissions,
   }, secret(), options);
@@ -133,12 +134,12 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
     const payload = jwt.verify(header.slice(7), secret(), {
       issuer: "playpulse",
       audience: "playpulse-api",
-    }) as JwtPayload & { role: string; permissions: string[]; email: string };
+    }) as JwtPayload & { role: string; permissions: string[]; email: string; fullName?: string };
     if (!payload.sub) throw new Error("Missing subject");
     req.auth = {
       id: payload.sub,
       email: payload.email,
-      fullName: "",
+      fullName: payload.fullName ?? "",
       role: payload.role,
       permissions: payload.permissions ?? [],
     };

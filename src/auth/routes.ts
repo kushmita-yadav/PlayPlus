@@ -1,4 +1,4 @@
-import type { Router } from "express";
+import type { Response, Router } from "express";
 import { Router as createRouter } from "express";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -19,6 +19,17 @@ import {
 } from "./auth.js";
 
 export const authRouter: Router = createRouter();
+
+function setUiSessionCookie(res: Response, session: string) {
+  res.setHeader(
+    "Set-Cookie",
+    `playpulse_ui=${encodeURIComponent(session)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=28800${env.NODE_ENV === "production" ? "; Secure" : ""}`,
+  );
+}
+
+function clearUiSessionCookie(res: Response) {
+  res.setHeader("Set-Cookie", "playpulse_ui=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+}
 
 authRouter.post("/register", async (req, res, next) => {
   try {
@@ -47,7 +58,7 @@ authRouter.post("/demo-login", async (req, res, next) => {
     };
     if (input.role === "visitor") {
       const session = createUiSession("visitor", "Visitor", "visitor@champions.club");
-      res.setHeader("Set-Cookie", `playpulse_ui=${session}; Path=/; HttpOnly; SameSite=Lax${env.NODE_ENV === "production" ? "; Secure" : ""}`);
+      setUiSessionCookie(res, session);
       res.status(200).json({ success: true, data: { role: "visitor", name: "Visitor" } });
       return;
     }
@@ -56,7 +67,7 @@ authRouter.post("/demo-login", async (req, res, next) => {
       throw new ApiError(401, "Invalid demo credentials", "INVALID_DEMO_CREDENTIALS");
     }
     const session = createUiSession(input.role, account.name, account.email);
-    res.setHeader("Set-Cookie", `playpulse_ui=${session}; Path=/; HttpOnly; SameSite=Lax${env.NODE_ENV === "production" ? "; Secure" : ""}`);
+    setUiSessionCookie(res, session);
     res.status(200).json({
       success: true,
       data: { role: input.role, name: account.name, email: account.email },
@@ -67,7 +78,7 @@ authRouter.post("/demo-login", async (req, res, next) => {
 });
 
 authRouter.post("/demo-logout", (_req, res) => {
-  res.setHeader("Set-Cookie", "playpulse_ui=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+  clearUiSessionCookie(res);
   res.status(200).json({ success: true, data: { signedOut: true } });
 });
 
@@ -96,10 +107,28 @@ authRouter.post("/login", async (req, res, next) => {
     }).parse(req.body);
     const user = await authenticate(input.email, input.password);
     const refreshToken = await issueRefreshToken(user.id);
+    setUiSessionCookie(res, createUiSession(user.role, user.fullName, user.email));
     res.status(200).json({
       success: true,
       data: { accessToken: signToken(user), refreshToken, expiresIn: "8h", user },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.post("/logout", async (req, res, next) => {
+  try {
+    const input = z.object({ refreshToken: z.string().min(32).max(128).optional() }).parse(req.body ?? {});
+    if (input.refreshToken) {
+      if (!pool) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
+      await pool.query(
+        "UPDATE refresh_tokens SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL",
+        [hashSecurityToken(input.refreshToken)],
+      );
+    }
+    clearUiSessionCookie(res);
+    res.status(200).json({ success: true, data: { signedOut: true } });
   } catch (error) {
     next(error);
   }
@@ -115,7 +144,7 @@ authRouter.post("/refresh", async (req, res, next) => {
     const input = z.object({ refreshToken: z.string().min(32).max(128) }).parse(req.body);
     const hash = hashSecurityToken(input.refreshToken);
     const found = await pool.query(
-      `SELECT rt.account_id, a.email, r.name AS role,
+      `SELECT rt.account_id, a.email, a.full_name, r.name AS role,
               COALESCE(array_agg(p.code) FILTER (WHERE p.code IS NOT NULL), ARRAY[]::text[]) AS permissions
        FROM refresh_tokens rt
        JOIN accounts a ON a.id=rt.account_id
@@ -132,11 +161,12 @@ authRouter.post("/refresh", async (req, res, next) => {
     const user = {
       id: row.account_id,
       email: row.email,
-      fullName: "",
+      fullName: row.full_name,
       role: row.role,
       permissions: row.permissions,
     };
     const refreshToken = await issueRefreshToken(user.id);
+    setUiSessionCookie(res, createUiSession(user.role, user.fullName, user.email));
     res.status(200).json({
       success: true,
       data: { accessToken: signToken(user), refreshToken, expiresIn: "8h" },
