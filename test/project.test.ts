@@ -67,6 +67,10 @@ test("admin role cannot be self-assigned during registration", async () => {
     await request(app).post("/api/v1/shop/orders/example/fulfill").send({}).expect(401);
     await request(app).post("/api/v1/shop/orders/example/cancel").send({}).expect(401);
   });
+
+  test("cafeteria order placement rejects missing authentication", async () => {
+    await request(app).post("/api/v1/cafeteria/orders").send({}).expect(401);
+  });
   assert.ok([400, 403].includes(response.status));
 });
 

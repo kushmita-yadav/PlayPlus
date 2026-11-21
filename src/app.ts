@@ -10,6 +10,7 @@ import { authRouter } from "./auth/routes.js";
 import { membershipRouter } from "./memberships/routes.js";
 import { courtRouter } from "./courts/routes.js";
 import { shopRouter } from "./shop/routes.js";
+import { cafeteriaRouter } from "./cafeteria/routes.js";
 
 export function createApp() {
   const app = express();
@@ -69,6 +70,7 @@ export function createApp() {
   app.use("/api/v1/memberships", membershipRouter);
   app.use("/api/v1/courts", courtRouter);
   app.use("/api/v1/shop", shopRouter);
+  app.use("/api/v1/cafeteria", cafeteriaRouter);
 
   app.use(notFound);
   app.use(errorHandler);
