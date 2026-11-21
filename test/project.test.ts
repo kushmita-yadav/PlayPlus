@@ -84,6 +84,35 @@ test("admin role cannot be self-assigned during registration", async () => {
     await request(app).patch("/api/v1/quotations/example/status").send({ status: "sent" }).expect(401);
     await request(app).patch("/api/v1/leave/example").send({ status: "approved" }).expect(401);
   });
+
+  test("cancellation recovery rejects missing authentication", async () => {
+    await request(app).get("/api/v1/assistant/cancellation-recovery/example").expect(401);
+  });
+
+  test("balanced team generation works without database access", async () => {
+    env.JWT_SECRET = "a-test-secret-at-least-thirty-two-characters";
+    const adminToken = signToken({
+      id: "00000000-0000-4000-8000-000000000001",
+      email: "admin@example.com",
+      fullName: "Admin",
+      role: "admin",
+      permissions: [],
+    });
+    const response = await request(app)
+      .post("/api/v1/assistant/balance-teams")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        players: [
+          { memberId: "00000000-0000-4000-8000-000000000002", skillLevel: 5 },
+          { memberId: "00000000-0000-4000-8000-000000000003", skillLevel: 2 },
+          { memberId: "00000000-0000-4000-8000-000000000004", skillLevel: 4 },
+          { memberId: "00000000-0000-4000-8000-000000000005", skillLevel: 3 },
+        ],
+      })
+      .expect(200);
+    assert.equal(response.body.success, true);
+    assert.equal(response.body.data.teams.length, 2);
+  });
   assert.ok([400, 403].includes(response.status));
 });
 

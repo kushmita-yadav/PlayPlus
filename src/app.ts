@@ -12,6 +12,7 @@ import { courtRouter } from "./courts/routes.js";
 import { shopRouter } from "./shop/routes.js";
 import { cafeteriaRouter } from "./cafeteria/routes.js";
 import { operationsRouter } from "./operations/routes.js";
+import { assistantRouter } from "./assistant/routes.js";
 
 export function createApp() {
   const app = express();
@@ -73,6 +74,7 @@ export function createApp() {
   app.use("/api/v1/shop", shopRouter);
   app.use("/api/v1/cafeteria", cafeteriaRouter);
   app.use("/api/v1", operationsRouter);
+  app.use("/api/v1", assistantRouter);
 
   app.use(notFound);
   app.use(errorHandler);
