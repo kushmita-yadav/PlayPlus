@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PlayPulse | Member & Visitor Portal</title>
+  <link rel="stylesheet" href="/portal.css">
+</head>
+<body>
+  <header class="public-header">
+    <a class="public-brand" href="/"><span>P</span><div><strong>PlayPulse</strong><small>Champions Club</small></div></a>
+    <nav class="public-nav" id="publicNav">
+      <button class="active" data-portal-view="home">Home</button>
+      <button data-portal-view="courts">Courts</button>
+      <button data-portal-view="shop">Shop</button>
+      <button data-portal-view="plans">Membership</button>
+      <button data-portal-view="club">The Club</button>
+    </nav>
+    <div class="header-actions">
+      <button class="cart-button" id="cartButton">Bag <span id="cartCount">0</span></button>
+      <button class="account-button" id="accountButton">Member login</button>
+    </div>
+  </header>
+
+  <main id="portalView"></main>
+
+  <footer class="public-footer">
+    <div><strong>Champions Club</strong><p>Where every match begins.</p></div>
+    <div><strong>Visit</strong><p>Mon–Sun · 6:00 AM–10:00 PM</p></div>
+    <div><strong>Contact</strong><p>+91 98765 43210 · hello@champions.club</p></div>
+  </footer>
+
+  <div class="modal-backdrop" id="portalModalBackdrop" aria-hidden="true"><div class="modal" id="portalModal"></div></div>
+  <div class="toast" id="portalToast"></div>
+  <script src="/portal.js"></script>
+</body>
+</html>

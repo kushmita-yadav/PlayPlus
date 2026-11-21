@@ -24,6 +24,20 @@ test("sample frontend assets are served", async () => {
   assert.match(script.headers["content-type"], /javascript/);
 });
 
+test("login portal is served and exposes demo account roles", async () => {
+  const response = await request(app).get("/").expect(200);
+  assert.match(response.text, /Welcome to PlayPulse/);
+  assert.match(response.text, /admin@champions.club/);
+  assert.match(response.text, /Member/);
+  assert.match(response.text, /Visitor/);
+});
+
+test("admin, member, and visitor pages are served", async () => {
+  await request(app).get("/admin").expect(200);
+  await request(app).get("/portal").expect(200);
+  await request(app).get("/visitor").expect(200);
+});
+
 test("health endpoint returns a healthy response", async () => {
   const response = await request(app).get("/health").expect(200);
   assert.equal(response.body.status, "healthy");

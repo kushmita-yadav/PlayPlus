@@ -352,6 +352,20 @@ Open:
 - `http://localhost:3000/health` for backend health
 - `http://localhost:3000/api/v1/docs/` for Swagger UI
 
+### Demo accounts
+
+| Experience | Email | Password |
+|---|---|---|
+| Admin dashboard | `admin@champions.club` | `Admin@123` |
+| Member/Player portal | `member@champions.club` | `Member@123` |
+| Visitor | No login required | Continue as Visitor |
+
+Portal URLs:
+
+- `http://localhost:3000/admin` — Admin management experience
+- `http://localhost:3000/portal?mode=member` — Signed-in member experience
+- `http://localhost:3000/visitor` — Public visitor experience
+
 The frontend includes sample data and demo interactions for:
 
 - Dashboard and revenue

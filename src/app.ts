@@ -104,9 +104,18 @@ export function createApp() {
   app.use("/api/v1", notificationRouter);
 
   const frontendDirectory = path.resolve(process.cwd(), "frontend");
-  app.use(express.static(frontendDirectory));
+  app.use(express.static(frontendDirectory, { index: false }));
   app.get("/", (_req: Request, res: Response) => {
+    res.sendFile(path.join(frontendDirectory, "login.html"));
+  });
+  app.get("/admin", (_req: Request, res: Response) => {
     res.sendFile(path.join(frontendDirectory, "index.html"));
+  });
+  app.get("/portal", (_req: Request, res: Response) => {
+    res.sendFile(path.join(frontendDirectory, "portal.html"));
+  });
+  app.get("/visitor", (_req: Request, res: Response) => {
+    res.sendFile(path.join(frontendDirectory, "portal.html"));
   });
 
   app.use(notFound);

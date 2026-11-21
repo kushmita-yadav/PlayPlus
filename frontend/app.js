@@ -1,6 +1,11 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
+const demoSession = JSON.parse(sessionStorage.getItem("playpulseSession") || "null");
+if (!demoSession || !["admin", "manager", "staff"].includes(demoSession.role)) {
+  window.location.replace("/");
+}
+
 const money = (value) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
@@ -491,6 +496,11 @@ function handleModalSubmit(event) {
 
 function handleAction(action) {
   if (!action) return;
+  if (action === "logout") {
+    sessionStorage.removeItem("playpulseSession");
+    window.location.replace("/");
+    return;
+  }
   if (action.startsWith("view-member:")) {
     const member = memberById(action.split(":")[1]);
     openModal(`${member.name} · ${member.id}`, `<div class="form-grid"><div class="form-field"><label>Plan</label><input class="form-control" value="${member.plan}" readonly></div><div class="form-field"><label>Phone</label><input class="form-control" value="${member.phone}" readonly></div><div class="form-field"><label>Expiry</label><input class="form-control" value="${member.expiry}" readonly></div><div class="form-field"><label>Outstanding</label><input class="form-control" value="${money(member.balance)}" readonly></div></div>`, "Close", "close");

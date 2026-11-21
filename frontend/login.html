@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PlayPulse | Champions Club</title>
+  <link rel="stylesheet" href="/login.css">
+</head>
+<body>
+  <main class="login-page">
+    <section class="login-visual">
+      <div class="visual-brand"><span>P</span><div><strong>PlayPulse</strong><small>Champions Club</small></div></div>
+      <div class="visual-copy">
+        <p>One club. Every operation.</p>
+        <h1>Play better.<br>Manage smarter.</h1>
+        <div class="visual-stats"><div><strong>5</strong><span>Sports</span></div><div><strong>12</strong><span>Courts & nets</span></div><div><strong>1</strong><span>Unified platform</span></div></div>
+      </div>
+    </section>
+
+    <section class="login-panel">
+      <div class="login-card">
+        <p class="eyebrow">CHAMPIONS CLUB</p>
+        <h2>Welcome to PlayPulse</h2>
+        <p class="subtitle">Sign in to continue or explore the club as a visitor.</p>
+
+        <div class="role-tabs" aria-label="Login role">
+          <button class="role-tab active" data-role="admin">Admin</button>
+          <button class="role-tab" data-role="member">Member</button>
+          <button class="role-tab" data-role="visitor">Visitor</button>
+        </div>
+
+        <form id="loginForm">
+          <label>Email address<input id="email" type="email" autocomplete="email" required></label>
+          <label>Password<div class="password-field"><input id="password" type="password" autocomplete="current-password" required><button type="button" id="togglePassword" aria-label="Show password">Show</button></div></label>
+          <div class="form-row"><label class="remember"><input type="checkbox" id="remember"> Remember me</label><button type="button" class="link-button" id="forgotButton">Forgot password?</button></div>
+          <button class="login-button" type="submit">Sign in</button>
+        </form>
+
+        <div class="visitor-action" id="visitorAction" hidden>
+          <button class="visitor-button" id="visitorButton">Continue as visitor</button>
+        </div>
+
+        <div class="demo-credentials" id="demoCredentials">
+          <div><span>Demo email</span><strong id="demoEmail">admin@champions.club</strong></div>
+          <div><span>Demo password</span><strong id="demoPassword">Admin@123</strong></div>
+        </div>
+
+        <p class="login-error" id="loginError" role="alert"></p>
+      </div>
+    </section>
+  </main>
+  <script src="/login.js"></script>
+</body>
+</html>

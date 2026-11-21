@@ -84,6 +84,13 @@ button { cursor: pointer; }
 .sidebar-footer { margin-top: auto; }
 .profile {
   border-top: 1px solid var(--line);
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  width: 100%;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
   margin-top: 10px;
   padding: 16px 8px 0;
   display: flex;
