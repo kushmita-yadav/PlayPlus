@@ -6,36 +6,6 @@ The project replaces fragmented operational processes such as WhatsApp court boo
 
 > **Project status:** Backend implementation is complete through Checkpoints 0–9. Checkpoint 10 deployment configuration is complete, but live Render verification requires external account access. Checkpoint 11 submission documentation is complete.
 
----
-
-## Table of Contents
-
-- [Why PlayPulse?](#why-playpulse)
-- [Challenge and Business Goals](#challenge-and-business-goals)
-- [What the System Covers](#what-the-system-covers)
-- [How It Works](#how-it-works)
-- [Technical Stack](#technical-stack)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Environment Configuration](#environment-configuration)
-- [Database Setup and Migrations](#database-setup-and-migrations)
-- [Running the Application](#running-the-application)
-- [API Guide](#api-guide)
-- [Authentication and Authorization](#authentication-and-authorization)
-- [Core Business Rules](#core-business-rules)
-- [Smart Assistant and Matchmaking](#smart-assistant-and-matchmaking)
-- [Testing and Quality](#testing-and-quality)
-- [Render Deployment](#render-deployment)
-- [Important Assumptions](#important-assumptions)
-- [External Integration Boundaries](#external-integration-boundaries)
-- [Security](#security)
-- [Development Checkpoints](#development-checkpoints)
-- [Repository Links and Submission](#repository-links-and-submission)
-- [Troubleshooting](#troubleshooting)
-
----
 
 ## Why PlayPulse?
 
