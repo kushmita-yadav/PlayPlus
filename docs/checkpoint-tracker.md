@@ -4,8 +4,8 @@
 |---|---|
 | 0 - Environment and repository readiness | PASSED |
 | 1 - Backend foundation and database | PASSED |
-| 2 - Authentication and authorization | NOT STARTED |
-| 3 - Membership management | NOT STARTED |
+| 2 - Authentication and authorization | PASSED |
+| 3 - Membership management | IN PROGRESS |
 | 4 - Court booking engine | NOT STARTED |
 | 5 - Sports shop and inventory | NOT STARTED |
 | 6 - Cafeteria and bar | NOT STARTED |

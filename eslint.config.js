@@ -11,6 +11,9 @@ export default tseslint.config(
         console: "readonly",
         process: "readonly"
       }
+    },
+    rules: {
+      "@typescript-eslint/no-namespace": "off"
     }
   }
 );

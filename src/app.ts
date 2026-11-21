@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { env } from "./config/env.js";
 import { checkDatabase, pool } from "./database/pool.js";
 import { errorHandler, notFound } from "./middleware/errors.js";
+import { authRouter } from "./auth/routes.js";
 
 export function createApp() {
   const app = express();
@@ -60,6 +61,8 @@ export function createApp() {
       },
     });
   });
+
+  app.use("/api/v1/auth", authRouter);
 
   app.use(notFound);
   app.use(errorHandler);
