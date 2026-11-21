@@ -13,4 +13,4 @@
 | 8 - Smart assistant and matchmaking | PASSED |
 | 9 - Quality, testing, and security | PASSED |
 | 10 - Render deployment | BLOCKED |
-| 11 - Documentation and submission readiness | NOT STARTED |
+| 11 - Documentation and submission readiness | BLOCKED |
