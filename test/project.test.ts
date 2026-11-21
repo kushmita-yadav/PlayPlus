@@ -40,6 +40,10 @@ test("admin role cannot be self-assigned during registration", async () => {
     fullName: "Staff User",
     role: "admin",
   });
+
+  test("protected member benefits reject missing authentication", async () => {
+    await request(app).get("/api/v1/memberships/members/example/benefits").expect(401);
+  });
   assert.ok([400, 403].includes(response.status));
 });
 

@@ -7,6 +7,7 @@ import { env } from "./config/env.js";
 import { checkDatabase, pool } from "./database/pool.js";
 import { errorHandler, notFound } from "./middleware/errors.js";
 import { authRouter } from "./auth/routes.js";
+import { membershipRouter } from "./memberships/routes.js";
 
 export function createApp() {
   const app = express();
@@ -63,6 +64,7 @@ export function createApp() {
   });
 
   app.use("/api/v1/auth", authRouter);
+  app.use("/api/v1/memberships", membershipRouter);
 
   app.use(notFound);
   app.use(errorHandler);
