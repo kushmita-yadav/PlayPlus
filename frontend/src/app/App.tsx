@@ -1,21 +1,44 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Activity, ArrowLeft, ArrowRight, Bell, CalendarDays, Check, CircleDollarSign,
-  ClipboardList, Coffee, LayoutDashboard, LogOut, Menu, Package, Search, Settings,
-  ShieldCheck, ShoppingBag, Sparkles, Users, X,
+  ChefHat, CircleCheck, ClipboardList, Clock3, Coffee, LayoutDashboard, LogOut, MapPin, Menu,
+  MessageCircle, Minus, Package, Plus, Search, Send, Settings, ShieldCheck, ShoppingBag, ShoppingCart,
+  Sparkles, Users, Utensils, X,
 } from "lucide-react";
 import {
   apiRequest, ApiRequestError, clearAuthTokens, getRefreshToken, saveAuthTokens, type ApiEnvelope,
 } from "../lib/api";
 import { bookingTimes, isSlotBooked } from "../lib/booking.js";
 import type { Booking } from "../lib/booking.js";
-import type { DemoRole, DemoRow, DemoSession, DemoState, ModuleKey, PublicState, SyncStatus } from "../types";
+import type {
+  DemoRole, DemoRow, DemoSession, DemoState, MemberActivity, ModuleKey, PublicState,
+  RazorpayPaymentResult, SyncStatus,
+} from "../types";
 
 const emptyDemoState: DemoState = {
   members: [], plans: [], courts: [], bookings: [], products: [], orders: [],
   menu: [], tables: [], tabs: [], kitchen: [], enquiries: [], staff: [],
   leave: [], transactions: [], expenses: [], invoices: [], notifications: [],
 };
+
+let razorpayScriptPromise: Promise<void> | null = null;
+function ensureRazorpayCheckout(): Promise<void> {
+  if (window.Razorpay) return Promise.resolve();
+  if (!razorpayScriptPromise) {
+    razorpayScriptPromise = new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.onload = () => window.Razorpay ? resolve() : reject(new Error("Razorpay checkout did not initialize"));
+      script.onerror = () => reject(new Error("Could not load Razorpay checkout"));
+      document.head.appendChild(script);
+    }).catch((error: unknown) => {
+      razorpayScriptPromise = null;
+      throw error;
+    });
+  }
+  return razorpayScriptPromise ?? Promise.reject(new Error("Could not initialize Razorpay checkout"));
+}
 
 const navigation = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -34,6 +57,35 @@ const navigation = [
 
 type ViewKey = typeof navigation[number]["key"];
 type FieldDefinition = { name: string; label: string; type?: string; options?: string[] };
+type ShopProduct = {
+  id: string; name: string; description: string; category: string; price: number;
+  stock_quantity: number; low_stock_threshold: number;
+};
+type MembershipPlan = {
+  id: string; code: string; name: string; description: string; monthlyPrice: number;
+  benefits: Record<string, number>;
+};
+type ShopOrder = {
+  id: string; order_number: string; status: string; total_amount: number;
+  payment_status?: string | null;
+  customer_name: string | null; customer_email: string | null; customer_phone: string | null;
+  fulfillment: string; items: Array<{ name: string; quantity: number; lineTotal: number }>;
+};
+type MemberRecord = {
+  id: string; member_number: string; full_name: string; phone: string; email: string | null;
+  member_status: string; membership_id: string | null; membership_status: string | null;
+  approval_status: "pending" | "approved" | "rejected" | null;
+  expires_at: string | null; plan_code: string | null; plan_name: string | null; monthly_price: number | null;
+};
+type CafeteriaMenuItem = { id: string; name: string; category: string; price: number; is_available: boolean };
+type CafeteriaTable = { id: string; table_number: string; seats: number; status: "available" | "occupied" | "reserved" };
+type CafeteriaTab = {
+  id: string; guest_name: string | null; table_id: string | null; table_number: string | null; balance: number;
+};
+type KitchenOrder = {
+  id: string; order_number: string; status: "placed" | "preparing" | "ready";
+  notes: string | null; created_at: string; items: Array<{ name: string; quantity: number }>;
+};
 
 const moduleConfig: Partial<Record<ViewKey, { title: string; arrays: ModuleKey[]; fields?: FieldDefinition[] }>> = {
   members: { title: "Members", arrays: ["members"], fields: [
@@ -103,6 +155,10 @@ function useDemoSession() {
 
   useEffect(() => {
     let active = true;
+    if (!getRefreshToken()) {
+      setLoading(false);
+      return () => { active = false; };
+    }
     void apiRequest<ApiEnvelope<{ email: string; fullName: string; role: DemoRole }>>("/api/v1/auth/me")
       .then((response) => {
         if (active) setSession({
@@ -358,11 +414,11 @@ function App() {
     }
   };
 
-  const bookCourt = async (courtId: string, date: string, time: string) => {
+  const bookCourt = async (courtId: string, date: string, time: string, durationMinutes = 60) => {
     setBusy(true);
     try {
       await apiRequest<ApiEnvelope<unknown>>("/api/v1/demo-data/public/bookings", {
-        method: "POST", body: JSON.stringify({ courtId, date, time }),
+        method: "POST", body: JSON.stringify({ courtId, date, time, durationMinutes }),
       });
       await publicSync.refresh();
       if (session && !["member", "visitor"].includes(session.role)) await staff.refreshData();
@@ -502,7 +558,7 @@ function AdminWorkspace({ session, canManage, view, title, allowedViews, data, s
   onNavigate: (view: ViewKey) => void;
   onLogout: () => Promise<void>;
   onCreate: (key: ModuleKey, record: DemoRow) => Promise<void>;
-  onBook: (courtId: string, date: string, time: string) => Promise<void>;
+  onBook: (courtId: string, date: string, time: string, durationMinutes?: number) => Promise<void>;
   onUpdate: (key: ModuleKey, id: unknown, update: Partial<DemoRow>) => Promise<void>;
   notify: (message: string) => void;
   children: React.ReactNode;
@@ -536,6 +592,7 @@ function AdminWorkspace({ session, canManage, view, title, allowedViews, data, s
       </section>
     </main>
     {children}
+    <AssistantChatWidget />
   </div>;
 }
 
@@ -684,9 +741,12 @@ function AdminModule({ view, data, saving, onCreate, onUpdate, role }: {
   onUpdate: (key: ModuleKey, id: unknown, update: Partial<DemoRow>) => Promise<void>;
   role: DemoRole;
 }) {
-  const config = moduleConfig[view];
   const [search, setSearch] = useState("");
   const [createKey, setCreateKey] = useState<ModuleKey | null>(null);
+  if (view === "members") return <MemberManagement />;
+  if (view === "shop") return <ShopOperations />;
+  if (view === "cafeteria") return <CafeteriaPOS />;
+  const config = moduleConfig[view];
   if (!config) return null;
   const keys = config.arrays;
   const managerCreatable = new Set<ModuleKey>(["menu", "enquiries"]);
@@ -696,8 +756,6 @@ function AdminModule({ view, data, saving, onCreate, onUpdate, role }: {
   const canReviewLeave = role === "admin" || role === "manager";
   const shown = (rows: DemoRow[]) => rows.filter((row) => Object.values(row).some((value) => text(value).toLowerCase().includes(search.toLowerCase())));
   return <><div className="welcome-row"><div><span className="eyebrow">OPERATIONS</span><h2>{config.title}</h2><p>Manage club records using shared, live data.</p></div>{canCreate && <button className="primary-button" onClick={() => setCreateKey(keys[0])}>+ Add record</button>}</div>
-    {view === "shop" && <div className="notice-card"><Package size={18} /> Product stock, catalog, and orders are synchronized with the visitor-facing catalog.</div>}
-    {view === "cafeteria" && <div className="notice-card"><Coffee size={18} /> Kitchen queue, open tabs, tables, and menu availability.</div>}
     {view === "reports" && <div className="notice-card"><ClipboardList size={18} /> Reports are based on recorded transactions, expenses, and invoice payments.</div>}
     {view !== "settings" && <div className="toolbar"><label className="search-box"><Search size={17} /><input placeholder={`Search ${config.title.toLowerCase()}`} value={search} onChange={(event) => setSearch(event.target.value)} /></label><span className="record-count">{keys.reduce((total: number, key) => total + data[key].length, 0)} records</span></div>}
     <div className="module-grid">{keys.map((key) => <section className="card" key={key}><div className="card-header"><div><h3>{labelFor(key)}</h3><p>{data[key].length} shared records</p></div>
@@ -712,6 +770,413 @@ function AdminModule({ view, data, saving, onCreate, onUpdate, role }: {
     {view === "assistant" && <p className="muted">Assistant is ready.</p>}
     {saving && <span className="sr-only" role="status">Saving shared data</span>}
   </>;
+}
+
+function MemberManagement() {
+  const [members, setMembers] = useState<MemberRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "active" | "pending" | "expired">("all");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card" | "upi">("cash");
+  const [savingId, setSavingId] = useState("");
+
+  const refresh = useCallback(async () => {
+    setError("");
+    try {
+      const response = await apiRequest<ApiEnvelope<MemberRecord[]>>("/api/v1/memberships/members");
+      setMembers(response.data);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load member records");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const pending = members.filter((member) =>
+    member.membership_status === "pending" && member.approval_status === "pending");
+  const approvedPending = members.filter((member) =>
+    member.membership_status === "pending" && member.approval_status === "approved");
+  const isExpired = (member: MemberRecord) => member.membership_status === "expired" ||
+    (member.membership_status === "active" && member.expires_at !== null && member.expires_at !== undefined &&
+      new Date(member.expires_at).getTime() <= Date.now());
+  const active = members.filter((member) => member.membership_status === "active" && !isExpired(member));
+  const expiring = active.filter((member) => {
+    if (!member.expires_at) return false;
+    const remaining = new Date(member.expires_at).getTime() - Date.now();
+    return remaining >= 0 && remaining < 30 * 24 * 60 * 60 * 1000;
+  });
+  const visible = members.filter((member) => {
+    const status = isExpired(member) ? "expired" : member.membership_status;
+    const matchesFilter = filter === "all" || status === filter;
+    const textValue = [member.full_name, member.member_number, member.email, member.phone, member.plan_name]
+      .filter(Boolean).join(" ").toLowerCase();
+    return matchesFilter && textValue.includes(search.toLowerCase());
+  });
+  const activate = async (member: MemberRecord) => {
+    if (!member.membership_id) return;
+    setSavingId(member.membership_id);
+    setError("");
+    try {
+      const response = await apiRequest<ApiEnvelope<{ receiptNumber: string }>>(
+        `/api/v1/memberships/${member.membership_id}/activate`,
+        { method: "POST", body: JSON.stringify({ paymentMethod }) },
+      );
+      await refresh();
+      setError(`Payment recorded: receipt ${response.data.receiptNumber}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not activate this membership");
+    } finally {
+      setSavingId("");
+    }
+  };
+  const decideApplication = async (member: MemberRecord, decision: "approve" | "reject") => {
+    if (!member.membership_id) return;
+    setSavingId(member.membership_id);
+    setError("");
+    try {
+      await apiRequest<ApiEnvelope<unknown>>(
+        `/api/v1/memberships/${member.membership_id}/${decision}`,
+        { method: "POST" },
+      );
+      await refresh();
+      setError(`Membership application ${decision}d.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Could not ${decision} this application`);
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  return <div className="business-module">
+    <div className="welcome-row"><div><span className="eyebrow">MEMBER EXPERIENCE</span><h2>Member directory</h2><p>Membership applications, plan details and contact records from the live database.</p></div></div>
+    <div className="stats-grid business-stats">
+      <article className="card stat-card"><div className="stat-top"><span>Total profiles</span><span className="stat-icon"><Users size={18} /></span></div><strong className="stat-value">{members.length}</strong><small className="stat-note">Registered member records</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Active memberships</span><span className="stat-icon"><CircleCheck size={18} /></span></div><strong className="stat-value">{active.length}</strong><small className="stat-note">Currently eligible for benefits</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Awaiting approval</span><span className="stat-icon"><Clock3 size={18} /></span></div><strong className="stat-value">{pending.length}</strong><small className="stat-note">New plan applications</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Expiring soon</span><span className="stat-icon"><CalendarDays size={18} /></span></div><strong className="stat-value">{expiring.length}</strong><small className="stat-note">Within the next 30 days</small></article>
+    </div>
+    <section className="card business-panel">
+      <div className="card-header"><div><span className="eyebrow">MEMBERSHIP DESK</span><h3>Applications for approval</h3><p>Review and approve a plan before the applicant can pay.</p></div>
+      </div>
+      {pending.length ? <div className="pending-memberships">{pending.map((member) => <article className="pending-member" key={member.membership_id}>
+        <div className="pending-member-avatar">{member.full_name.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}</div>
+        <div className="pending-member-details"><strong>{member.full_name}</strong><span>{member.plan_name} · {member.member_number}</span><small>{member.email ?? member.phone}</small></div>
+        <strong className="pending-member-price">{money(member.monthly_price)}</strong>
+        <button className="primary-button" disabled={savingId === member.membership_id} onClick={() => void decideApplication(member, "approve")}>{savingId === member.membership_id ? "Saving…" : "Approve"}</button>
+        <button className="secondary-button" disabled={savingId === member.membership_id} onClick={() => void decideApplication(member, "reject")}>Reject</button>
+      </article>)}</div> : <p className="empty-inline">No membership applications are waiting for approval.</p>}
+    </section>
+    <section className="card business-panel">
+      <div className="card-header"><div><span className="eyebrow">PAYMENT DESK</span><h3>Approved applications</h3><p>Record in-person payments for approved plans.</p></div>
+        <label className="payment-select">Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as "cash" | "card" | "upi")}><option value="cash">Cash</option><option value="card">Card</option><option value="upi">UPI</option></select></label>
+      </div>
+      {approvedPending.length ? <div className="pending-memberships">{approvedPending.map((member) => <article className="pending-member" key={member.membership_id}>
+        <div className="pending-member-avatar">{member.full_name.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}</div>
+        <div className="pending-member-details"><strong>{member.full_name}</strong><span>{member.plan_name} · {member.member_number}</span><small>{member.email ?? member.phone}</small></div>
+        <strong className="pending-member-price">{money(member.monthly_price)}</strong>
+        <button className="primary-button" disabled={savingId === member.membership_id} onClick={() => void activate(member)}>{savingId === member.membership_id ? "Saving…" : "Record payment"}</button>
+      </article>)}</div> : <p className="empty-inline">No approved memberships are waiting for payment.</p>}
+    </section>
+    <section className="card business-panel">
+      <div className="card-header"><div><span className="eyebrow">CLUB DIRECTORY</span><h3>All members</h3><p>{visible.length} of {members.length} profiles</p></div>
+        <div className="member-filters">
+          <label className="search-box"><Search size={16} /><input placeholder="Search name, plan or contact" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+          <select aria-label="Filter members by membership status" value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)}>
+            <option value="all">All statuses</option><option value="active">Active</option><option value="pending">Pending</option><option value="expired">Expired</option>
+          </select>
+        </div>
+      </div>
+      {loading ? <p className="empty-inline">Loading live member records…</p> : error && !members.length ? <p className="inline-error" role="alert">{error}</p> :
+        <div className="table-wrap"><table className="data-table member-directory-table"><thead><tr><th>MEMBER</th><th>PLAN</th><th>CONTACT</th><th>VALID THROUGH</th><th>STATUS</th></tr></thead><tbody>
+          {visible.map((member) => {
+            const status = isExpired(member) ? "expired" : member.membership_status ?? "none";
+            return <tr key={member.id}><td><strong>{member.full_name}</strong><small>{member.member_number}</small></td><td>{member.plan_name ?? "No plan selected"}</td><td>{member.email ?? "—"}<small>{member.phone}</small></td><td>{member.expires_at ? displayDate(member.expires_at.slice(0, 10)) : "—"}</td><td><span className={`status-pill ${status === "active" ? "success" : status === "pending" ? "warning" : ""}`}>{status}</span></td></tr>;
+          })}
+          {!visible.length && <tr><td colSpan={5} className="empty-inline">No members match this filter.</td></tr>}
+        </tbody></table></div>}
+      {error && members.length > 0 && <p className="inline-error" role="status">{error}</p>}
+    </section>
+  </div>;
+}
+
+function ShopOperations() {
+  const [products, setProducts] = useState<ShopProduct[]>([]);
+  const [orders, setOrders] = useState<ShopOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card" | "upi">("cash");
+  const [busyOrder, setBusyOrder] = useState("");
+
+  const refresh = useCallback(async () => {
+    setError("");
+    try {
+      const [catalog, orderList] = await Promise.all([
+        apiRequest<ApiEnvelope<ShopProduct[]>>("/api/v1/shop/products"),
+        apiRequest<ApiEnvelope<ShopOrder[]>>("/api/v1/shop/orders"),
+      ]);
+      setProducts(catalog.data);
+      setOrders(orderList.data);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load shop operations");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const updateOrder = async (order: ShopOrder, action: "confirm" | "fulfill" | "cancel") => {
+    setBusyOrder(order.id);
+    setError("");
+    try {
+      if (action === "confirm") {
+        await apiRequest<ApiEnvelope<unknown>>(`/api/v1/shop/orders/${order.id}/confirm`, {
+          method: "POST", body: JSON.stringify({ paymentMethod }),
+        });
+      } else {
+        await apiRequest<ApiEnvelope<unknown>>(`/api/v1/shop/orders/${order.id}/${action}`, {
+          method: "POST", body: JSON.stringify({}),
+        });
+      }
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update this order");
+    } finally {
+      setBusyOrder("");
+    }
+  };
+  const pendingCount = orders.filter((order) => order.status === "pending").length;
+  const lowStock = products.filter((product) => product.stock_quantity <= product.low_stock_threshold).length;
+  const totalStock = products.reduce((sum, product) => sum + product.stock_quantity, 0);
+
+  return <div className="business-module">
+    <div className="welcome-row"><div><span className="eyebrow">RETAIL OPERATIONS</span><h2>Shop & inventory</h2><p>Live stock, visitor pickup orders and payment collection.</p></div>
+      <label className="payment-select">Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as "cash" | "card" | "upi")}><option value="cash">Cash</option><option value="card">Card</option><option value="upi">UPI</option></select></label>
+    </div>
+    <div className="stats-grid business-stats">
+      <article className="card stat-card"><div className="stat-top"><span>Catalog products</span><span className="stat-icon"><Package size={18} /></span></div><strong className="stat-value">{products.length}</strong><small className="stat-note">Active items for sale</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Units in stock</span><span className="stat-icon"><ShoppingBag size={18} /></span></div><strong className="stat-value">{totalStock}</strong><small className="stat-note">Across active products</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Low-stock products</span><span className="stat-icon"><Package size={18} /></span></div><strong className="stat-value">{lowStock}</strong><small className="stat-note">At or below restock threshold</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Orders to action</span><span className="stat-icon"><ShoppingCart size={18} /></span></div><strong className="stat-value">{pendingCount}</strong><small className="stat-note">Payment due at the club</small></article>
+    </div>
+    {error && <p className="inline-error" role="alert">{error}</p>}
+    <section className="card business-panel"><div className="card-header"><div><span className="eyebrow">INVENTORY HEALTH</span><h3>Current stock</h3><p>Catalog data is loaded from the normalized inventory.</p></div></div>
+      {loading ? <p className="empty-inline">Loading live inventory…</p> : <div className="inventory-grid">{products.map((product) => {
+        const ratio = product.low_stock_threshold > 0 ? Math.min(100, Math.round(product.stock_quantity / (product.low_stock_threshold * 2) * 100)) : product.stock_quantity > 0 ? 100 : 0;
+        const isLow = product.stock_quantity <= product.low_stock_threshold;
+        return <article className={`inventory-card ${isLow ? "low" : ""}`} key={product.id}>
+          <div className="inventory-card-top"><span className="eyebrow">{product.category}</span><span className={`status-pill ${isLow ? "warning" : "success"}`}>{isLow ? "Restock" : "In stock"}</span></div>
+          <h4>{product.name}</h4><p>{product.description || "Club shop product"}</p><div className="inventory-card-bottom"><strong>{money(product.price)}</strong><span>{product.stock_quantity} units</span></div>
+          <div className="inventory-track"><i style={{ width: `${ratio}%` }} /></div>
+        </article>;
+      })}{!products.length && <p className="empty-inline">No active catalog items.</p>}</div>}
+    </section>
+    <section className="card business-panel"><div className="card-header"><div><span className="eyebrow">PICKUP DESK</span><h3>Shop orders</h3><p>Record payment before handing over reserved items.</p></div></div>
+      {orders.length ? <div className="shop-order-list">{orders.map((order) => <article className="shop-order-card" key={order.id}>
+        <div className="shop-order-main"><span className={`status-pill ${order.status === "pending" ? "warning" : "success"}`}>{order.status}</span><strong>{order.order_number}</strong><small>{order.customer_name || "Club customer"} · {order.customer_phone || order.customer_email || "No contact provided"}</small>
+          <span className="shop-order-items">{order.items.map((item) => `${item.name} × ${item.quantity}`).join(" · ")}</span></div>
+        <strong className="shop-order-total">{money(order.total_amount)}</strong>
+        <div className="shop-order-actions">{order.status === "pending" && order.payment_status === "pending" ? <span className="muted">Awaiting online payment</span> :
+          order.status === "pending" ? <><button className="primary-button" disabled={busyOrder === order.id} onClick={() => void updateOrder(order, "confirm")}>{busyOrder === order.id ? "Saving…" : "Record payment"}</button><button className="secondary-button" disabled={busyOrder === order.id} onClick={() => void updateOrder(order, "cancel")}>Cancel</button></> :
+          order.status === "confirmed" ? <button className="primary-button" disabled={busyOrder === order.id} onClick={() => void updateOrder(order, "fulfill")}>{busyOrder === order.id ? "Saving…" : "Mark picked up"}</button> : <span className="muted">Completed</span>}</div>
+      </article>)}</div> : <p className="empty-inline">{loading ? "Loading orders…" : "No shop orders yet."}</p>}
+    </section>
+  </div>;
+}
+
+function CafeteriaPOS() {
+  const [menu, setMenu] = useState<CafeteriaMenuItem[]>([]);
+  const [tables, setTables] = useState<CafeteriaTable[]>([]);
+  const [tabs, setTabs] = useState<CafeteriaTab[]>([]);
+  const [queue, setQueue] = useState<KitchenOrder[]>([]);
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [tableId, setTableId] = useState("");
+  const [guestName, setGuestName] = useState("");
+  const [selectedTabId, setSelectedTabId] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card" | "upi">("cash");
+  const [busyTab, setBusyTab] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    setError("");
+    try {
+      const [menuResponse, tableResponse, tabsResponse, queueResponse] = await Promise.all([
+        apiRequest<ApiEnvelope<CafeteriaMenuItem[]>>("/api/v1/cafeteria/menu"),
+        apiRequest<ApiEnvelope<CafeteriaTable[]>>("/api/v1/cafeteria/tables"),
+        apiRequest<ApiEnvelope<CafeteriaTab[]>>("/api/v1/cafeteria/tabs"),
+        apiRequest<ApiEnvelope<KitchenOrder[]>>("/api/v1/cafeteria/kitchen/queue"),
+      ]);
+      setMenu(menuResponse.data);
+      setTables(tableResponse.data);
+      setTabs(tabsResponse.data);
+      setQueue(queueResponse.data);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load cafeteria operations");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const cartItems = menu.filter((item) => (cart[item.id] ?? 0) > 0);
+  const total = cartItems.reduce((sum, item) => sum + item.price * cart[item.id], 0);
+  const quantity = Object.values(cart).reduce((sum, value) => sum + value, 0);
+  const setItemQuantity = (id: string, value: number) => setCart((current) => {
+    const next = { ...current };
+    if (value <= 0) delete next[id];
+    else next[id] = value;
+    return next;
+  });
+  const placeOrder = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!cartItems.length) return;
+    if (!selectedTabId && guestName.trim().length < 2) {
+      setError("Enter a guest name to open a cafeteria tab.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      let activeTabId = selectedTabId;
+      if (!activeTabId) {
+        const tabResponse = await apiRequest<ApiEnvelope<{ id: string }>>("/api/v1/cafeteria/tabs", {
+          method: "POST",
+          body: JSON.stringify({
+            ...(tableId ? { tableId } : {}),
+            guestName: guestName.trim(),
+          }),
+        });
+        activeTabId = tabResponse.data.id;
+        setSelectedTabId(activeTabId);
+      }
+      const activeTab = tabs.find((tab) => tab.id === activeTabId);
+      await apiRequest<ApiEnvelope<unknown>>("/api/v1/cafeteria/orders", {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({
+          tabId: activeTabId,
+          ...((activeTab?.table_id || tableId) ? { tableId: activeTab?.table_id || tableId } : {}),
+          ...((activeTab?.guest_name || guestName.trim()) ? { guestName: activeTab?.guest_name || guestName.trim() } : {}),
+          items: cartItems.map((item) => ({ menuItemId: item.id, quantity: cart[item.id] })),
+        }),
+      });
+      setCart({});
+      setGuestName("");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not place cafeteria order");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const setTableStatus = async (table: CafeteriaTable) => {
+    const status = table.status === "available" ? "occupied" : "available";
+    setError("");
+    try {
+      await apiRequest<ApiEnvelope<CafeteriaTable>>(`/api/v1/cafeteria/tables/${table.id}/status`, {
+        method: "PATCH", body: JSON.stringify({ status }),
+      });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update table status");
+    }
+  };
+  const settleTab = async (tab: CafeteriaTab) => {
+    setBusyTab(tab.id);
+    setError("");
+    try {
+      await apiRequest<ApiEnvelope<unknown>>(`/api/v1/cafeteria/tabs/${tab.id}/settle`, {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ method: paymentMethod }),
+      });
+      if (selectedTabId === tab.id) {
+        setSelectedTabId("");
+        setTableId("");
+      }
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not settle this tab");
+    } finally {
+      setBusyTab("");
+    }
+  };
+  const advanceOrder = async (order: KitchenOrder) => {
+    const status = order.status === "placed" ? "preparing" : order.status === "preparing" ? "ready" : "served";
+    setError("");
+    try {
+      await apiRequest<ApiEnvelope<unknown>>(`/api/v1/cafeteria/orders/${order.id}/status`, {
+        method: "PATCH", body: JSON.stringify({ status }),
+      });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update kitchen status");
+    }
+  };
+  const occupiedTables = tables.filter((table) => table.status === "occupied").length;
+  const availableMenu = menu.filter((item) => item.is_available).length;
+
+  return <div className="business-module">
+    <div className="welcome-row"><div><span className="eyebrow">FOOD & HOSPITALITY</span><h2>Cafeteria service</h2><p>Take orders, manage seating and keep the kitchen queue moving.</p></div><span className="live-tag"><i /> LIVE OPERATIONS</span></div>
+    <div className="stats-grid business-stats">
+      <article className="card stat-card"><div className="stat-top"><span>Active kitchen orders</span><span className="stat-icon"><ChefHat size={18} /></span></div><strong className="stat-value">{queue.length}</strong><small className="stat-note">Placed, preparing or ready</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Occupied tables</span><span className="stat-icon"><Users size={18} /></span></div><strong className="stat-value">{occupiedTables}<small> / {tables.length}</small></strong><small className="stat-note">Current seating</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Menu items</span><span className="stat-icon"><Utensils size={18} /></span></div><strong className="stat-value">{availableMenu}</strong><small className="stat-note">Available to order</small></article>
+      <article className="card stat-card"><div className="stat-top"><span>Open tabs</span><span className="stat-icon"><ShoppingCart size={18} /></span></div><strong className="stat-value">{tabs.length}</strong><small className="stat-note">{quantity} items in current order · {money(total)}</small></article>
+    </div>
+    {error && <p className="inline-error" role="alert">{error}</p>}
+    <div className="cafeteria-layout">
+      <section className="card business-panel"><div className="card-header"><div><span className="eyebrow">POINT OF SALE</span><h3>Build an order</h3><p>Select items, then send them to the kitchen.</p></div></div>
+        {loading ? <p className="empty-inline">Loading menu…</p> : <div className="pos-menu-grid">{menu.filter((item) => item.is_available).map((item) => <article className="pos-menu-item" key={item.id}>
+          <span className="menu-category">{item.category}</span><strong>{item.name}</strong><span>{money(item.price)}</span>
+          <button className="pos-add-button" aria-label={`Add ${item.name}`} onClick={() => setItemQuantity(item.id, (cart[item.id] ?? 0) + 1)}><Plus size={16} /></button>
+          {(cart[item.id] ?? 0) > 0 && <div className="quantity-control"><button aria-label={`Remove one ${item.name}`} onClick={() => setItemQuantity(item.id, cart[item.id] - 1)}><Minus size={14} /></button><strong>{cart[item.id]}</strong><button aria-label={`Add one ${item.name}`} onClick={() => setItemQuantity(item.id, cart[item.id] + 1)}><Plus size={14} /></button></div>}
+        </article>)}</div>}
+        {!loading && !availableMenu && <p className="empty-inline">No cafeteria menu items are currently available.</p>}
+      </section>
+      <section className="card business-panel pos-checkout"><div className="card-header"><div><span className="eyebrow">CHECKOUT</span><h3>Order details</h3><p>Send orders to the kitchen and settle the guest tab.</p></div></div>
+        <form onSubmit={(event) => void placeOrder(event)}>
+          <label className="form-field">Open tab<select value={selectedTabId} onChange={(event) => {
+            const tabId = event.target.value;
+            const existing = tabs.find((tab) => tab.id === tabId);
+            setSelectedTabId(tabId);
+            setTableId(existing?.table_id ?? "");
+            setGuestName(existing?.guest_name ?? "");
+          }}><option value="">Start a new guest tab</option>{tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.guest_name ?? "Guest"}{tab.table_number ? ` · Table ${tab.table_number}` : ""} · {money(tab.balance)}</option>)}</select></label>
+          <label className="form-field">Table<select value={tableId} disabled={Boolean(selectedTabId)} onChange={(event) => setTableId(event.target.value)}><option value="">Takeaway / no table</option>{tables.filter((table) => table.status !== "reserved").map((table) => <option key={table.id} value={table.id}>Table {table.table_number} · {table.status}</option>)}</select></label>
+          {!selectedTabId && <label className="form-field">Guest name<input required minLength={2} value={guestName} onChange={(event) => setGuestName(event.target.value)} /></label>}
+          <div className="pos-cart-lines">{cartItems.map((item) => <div key={item.id}><span>{item.name} × {cart[item.id]}</span><strong>{money(item.price * cart[item.id])}</strong></div>)}
+            {!cartItems.length && <p className="empty-inline">Add a menu item to start an order.</p>}</div>
+          <div className="pos-total"><span>Total</span><strong>{money(total)}</strong></div>
+          <button className="primary-button full-width" disabled={saving || !cartItems.length}>{saving ? "Sending to kitchen…" : "Place cafeteria order"}</button>
+        </form>
+      </section>
+    </div>
+    <section className="card business-panel"><div className="card-header"><div><span className="eyebrow">FLOOR PLAN</span><h3>Table status</h3><p>Tap the status to toggle seating availability.</p></div></div>
+      <div className="table-status-grid">{tables.map((table) => <button key={table.id} className={`table-status-card ${table.status}`} onClick={() => void setTableStatus(table)}><MapPin size={17} /><strong>Table {table.table_number}</strong><span>{table.seats} seats · {table.status}</span></button>)}</div>
+      {!tables.length && !loading && <p className="empty-inline">No tables are configured.</p>}
+    </section>
+    <section className="card business-panel"><div className="card-header"><div><span className="eyebrow">COUNTER SETTLEMENT</span><h3>Open guest tabs</h3><p>Record the guest payment and release the table.</p></div>
+      <label className="payment-select">Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as "cash" | "card" | "upi")}><option value="cash">Cash</option><option value="card">Card</option><option value="upi">UPI</option></select></label>
+    </div>
+      {tabs.length ? <div className="open-tab-list">{tabs.map((tab) => <article className="open-tab-row" key={tab.id}>
+        <div><strong>{tab.guest_name ?? "Guest"}{tab.table_number ? ` · Table ${tab.table_number}` : ""}</strong><small>{tab.balance > 0 ? "Ready to settle" : "No orders on this tab yet"}</small></div>
+        <strong>{money(tab.balance)}</strong>
+        <button className="primary-button" disabled={tab.balance <= 0 || busyTab === tab.id} onClick={() => void settleTab(tab)}>{busyTab === tab.id ? "Settling…" : "Settle tab"}</button>
+      </article>)}</div> : <p className="empty-inline">{loading ? "Loading open tabs…" : "No open tabs."}</p>}
+    </section>
+    <section className="card business-panel"><div className="card-header"><div><span className="eyebrow">KITCHEN DISPLAY</span><h3>Order queue</h3><p>Advance each ticket as the kitchen works through it.</p></div></div>
+      {queue.length ? <div className="kitchen-queue">{queue.map((order) => <article className={`kitchen-ticket ${order.status}`} key={order.id}>
+        <div className="ticket-heading"><strong>{order.order_number}</strong><span className={`status-pill ${order.status === "ready" ? "success" : "warning"}`}>{order.status}</span></div>
+        <p>{order.items.map((item) => `${item.quantity} × ${item.name}`).join(" · ")}</p>
+        {order.notes && <small>{order.notes}</small>}
+        <button className="secondary-button" onClick={() => void advanceOrder(order)}>{order.status === "placed" ? "Start preparing" : order.status === "preparing" ? "Mark ready" : "Mark served"} <ArrowRight size={14} /></button>
+      </article>)}</div> : <p className="empty-inline">{loading ? "Loading kitchen queue…" : "Kitchen queue is clear."}</p>}
+    </section>
+  </div>;
 }
 
 function AccountProvisioningCard() {
@@ -810,7 +1275,7 @@ function RecordDialog({ moduleKey, fields, saving, onClose, onSave }: {
   </div>;
 }
 
-function AdminCourts({ data, onBook, notify, saving, canManage }: { data: DemoState; onBook: (courtId: string, date: string, time: string) => Promise<void>; notify: (message: string) => void; saving: boolean; canManage: boolean }) {
+function AdminCourts({ data, onBook, notify, saving, canManage }: { data: DemoState; onBook: (courtId: string, date: string, time: string, durationMinutes?: number) => Promise<void>; notify: (message: string) => void; saving: boolean; canManage: boolean }) {
   const [date, setDate] = useState(todayValue());
   const [courtId, setCourtId] = useState(String(data.courts.find((court) => court.status === "Available")?.id ?? ""));
   const [selectedTime, setSelectedTime] = useState("");
@@ -837,29 +1302,109 @@ function AdminCourts({ data, onBook, notify, saving, canManage }: { data: DemoSt
 function busyOrSaving(value: boolean) { return value; }
 
 function AssistantPanel({ data }: { data: DemoState }) {
-  return <><div className="welcome-row"><div><span className="eyebrow">CLUB INTELLIGENCE</span><h2>Smart assistant</h2><p>Quick operational insights from the current shared snapshot.</p></div></div>
+  return <><div className="welcome-row"><div><span className="eyebrow">CLUB INTELLIGENCE</span><h2>Smart assistant</h2><p>Quick operational insights from the current shared snapshot. Open Ask PlayPulse for general questions.</p></div></div>
     <section className="card assistant-card"><Sparkles size={24} /><h3>Club operations brief</h3><p>{data.members.length} members, {data.bookings.length} reservations, and {data.products.filter((item) => Number(item.stock || 0) <= Number(item.threshold || 0)).length} products below their stock threshold.</p><ul><li>Review upcoming membership expiries from the Members page.</li><li>Use Courts & bookings to see the latest slot availability.</li><li>Check Finance for invoices and recorded transactions.</li></ul></section>
+  </>;
+}
+
+type AssistantChatMessage = { role: "user" | "assistant"; content: string };
+
+function AssistantChatWidget() {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<AssistantChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  const sendMessage = async (event: FormEvent) => {
+    event.preventDefault();
+    const content = input.trim();
+    if (!content || loading) return;
+    const userMessage: AssistantChatMessage = { role: "user", content };
+    const conversation = [...messages, userMessage].slice(-10);
+    setMessages(conversation);
+    setInput("");
+    setError("");
+    setLoading(true);
+    try {
+      const response = await apiRequest<ApiEnvelope<{ reply: string }>>("/api/v1/assistant/chat", {
+        method: "POST",
+        body: JSON.stringify({ messages: conversation }),
+      });
+      const assistantMessage: AssistantChatMessage = { role: "assistant", content: response.data.reply };
+      setMessages([...conversation, assistantMessage].slice(-10));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The assistant could not respond. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <>
+    {!open && <button className="assistant-launcher" aria-label="Ask the PlayPulse assistant" aria-expanded={open} onClick={() => setOpen(true)}>
+      <MessageCircle size={19} /><span>Ask PlayPulse</span>
+    </button>}
+    {open && <section className="assistant-chat-panel" role="dialog" aria-label="PlayPulse assistant">
+      <header className="assistant-chat-header">
+        <span className="assistant-chat-icon"><Sparkles size={17} /></span>
+        <div><strong>PlayPulse assistant</strong><small>General club and sports help</small></div>
+        <button type="button" className="assistant-chat-close" aria-label="Close assistant" onClick={() => setOpen(false)}><X size={18} /></button>
+      </header>
+      <div className="assistant-chat-messages" role="log" aria-live="polite" aria-label="Conversation">
+        {!messages.length && <div className="assistant-chat-message assistant">
+          <strong>PlayPulse</strong>
+          <p>Hi! I can help with sports questions and explain how to use the club website. What would you like to know?</p>
+        </div>}
+        {messages.map((message, index) => <div className={`assistant-chat-message ${message.role}`} key={`${message.role}-${index}`}>
+          <strong>{message.role === "assistant" ? "PlayPulse" : "You"}</strong>
+          <p>{message.content}</p>
+        </div>)}
+        {loading && <div className="assistant-chat-message assistant"><strong>PlayPulse</strong><p>Thinking…</p></div>}
+        <div ref={messagesEndRef} />
+      </div>
+      {messages.length === 0 && <div className="assistant-suggestions">
+        <button type="button" onClick={() => setInput("How do I book a court?")}>Booking a court</button>
+        <button type="button" onClick={() => setInput("What sports can I play here?")}>Sports at the club</button>
+      </div>}
+      {error && <p className="assistant-chat-error" role="alert">{error}</p>}
+      <form className="assistant-chat-form" onSubmit={(event) => void sendMessage(event)}>
+        <label className="sr-only" htmlFor="assistant-chat-input">Message the PlayPulse assistant</label>
+        <textarea id="assistant-chat-input" ref={inputRef} rows={2} maxLength={2000} value={input} placeholder="Ask a question…" onChange={(event) => setInput(event.target.value)} />
+        <button type="submit" aria-label="Send message" disabled={loading || !input.trim()}><Send size={17} /></button>
+      </form>
+      <p className="assistant-privacy">Messages are sent to Groq to generate replies. Don’t share passwords or payment details.</p>
+    </section>}
   </>;
 }
 
 function PublicPortal({ memberMode, member, data, status, selectedView, setSelectedView, busy, onBook, onLogout, notify, toast }: {
   memberMode: boolean; member: PublicState["member"]; data: PublicState | null; status: SyncStatus; selectedView: string; setSelectedView: (view: string) => void;
-  busy: boolean; onBook: (courtId: string, date: string, time: string) => Promise<void>; onLogout: () => Promise<void>; notify: (message: string) => void; toast: string;
+  busy: boolean; onBook: (courtId: string, date: string, time: string, durationMinutes?: number) => Promise<void>; onLogout: () => Promise<void>; notify: (message: string) => void; toast: string;
 }) {
   return <div className="public-shell">
     <header className="public-header"><a className="brand public-brand" href="/"><span className="brand-mark">P</span><span><strong>PlayPulse</strong><small>Champions Club</small></span></a>
       <nav aria-label="Club navigation">{(memberMode ? ["home", "courts", "shop", "plans", "bookings", "account"] : ["home", "courts", "shop", "plans", "club"]).map((view) =>
-        <button key={view} className={selectedView === view ? "active" : ""} onClick={() => setSelectedView(view)}>{view === "home" ? "Home" : view === "plans" ? "Membership" : view === "club" ? "The club" : view[0].toUpperCase() + view.slice(1)}</button>)}</nav>
+        <button key={view} className={selectedView === view ? "active" : ""} onClick={() => setSelectedView(view)}>{view === "home" ? "Home" : view === "plans" ? "Membership" : view === "club" ? "The club" : view === "bookings" ? "My activity" : view[0].toUpperCase() + view.slice(1)}</button>)}</nav>
       <div className="header-actions"><SyncIndicator status={status} saving={busy} />{memberMode ? <button className="account-button" onClick={() => void onLogout()}><LogOut size={15} /> Log out</button> : <a className="account-button" href="/login">Sign in</a>}</div>
     </header>
     {selectedView === "home" ? <PublicHome memberMode={memberMode} member={member} data={data} setView={setSelectedView} /> :
       selectedView === "courts" ? <PublicCourts data={data} onBook={onBook} busy={busy} notify={notify} /> :
-      selectedView === "shop" ? <PublicShop data={data} /> :
-      selectedView === "plans" ? <PublicPlans data={data} /> :
-      selectedView === "bookings" && memberMode ? <MemberBookings data={data} member={member} setView={setSelectedView} /> :
+      selectedView === "shop" ? <PublicShop memberMode={memberMode} member={member} notify={notify} /> :
+      selectedView === "plans" ? <PublicPlans memberMode={memberMode} /> :
+      selectedView === "bookings" && memberMode ? <MemberBookings member={member} setView={setSelectedView} /> :
       selectedView === "account" && memberMode ? <MemberAccount member={member} /> :
-      <ClubOverview />}
+      <ClubOverview data={data} setView={setSelectedView} />}
     <footer className="public-footer"><div><strong>Champions Club</strong><span>Where every match begins.</span></div></footer>
+    <AssistantChatWidget />
     {toast && <div className="toast-message" role="status">{toast}</div>}
   </div>;
 }
@@ -905,40 +1450,237 @@ function PublicHome({ memberMode, member, data, setView }: { memberMode: boolean
 
 function MemberSummary({ member, data, setView }: { member: PublicState["member"]; data: PublicState | null; setView: (view: string) => void }) {
   const bookings = data?.memberBookings ?? [];
-  return <section className="member-summary"><div><span className="eyebrow">MEMBER OVERVIEW</span><h2>{member?.plan ?? "Member"} membership</h2><p>{member ? `ID ${member.id}${member.expiry ? ` · valid through ${displayDate(member.expiry)}` : ""}` : "Membership details are not available."}</p></div><div className="summary-stats"><div><strong>{bookings.length}</strong><span>bookings</span></div><div><strong>{member?.balance == null ? "—" : money(member.balance)}</strong><span>account balance</span></div></div><button className="secondary-button" onClick={() => setView("bookings")}>My bookings</button></section>;
+  const membershipNote = member?.membershipStatus === "pending"
+    ? "Payment due at the club to activate this plan."
+    : member?.expiry ? `Valid through ${displayDate(member.expiry)}` : "Membership details are not available.";
+  return <section className="member-summary"><div><span className="eyebrow">MEMBER OVERVIEW</span><h2>{member?.plan ?? "Member"} membership</h2><p>{member ? `ID ${member.id} · ${membershipNote}` : membershipNote}</p></div><div className="summary-stats"><div><strong>{bookings.length}</strong><span>bookings</span></div><div><strong>{member?.balance == null ? "—" : money(member.balance)}</strong><span>account balance</span></div></div><button className="secondary-button" onClick={() => setView("bookings")}>My bookings</button></section>;
 }
 
-function PublicCourts({ data, onBook, busy, notify }: { data: PublicState | null; onBook: (courtId: string, date: string, time: string) => Promise<void>; busy: boolean; notify: (message: string) => void }) {
+function PublicCourts({ data, onBook, busy, notify }: { data: PublicState | null; onBook: (courtId: string, date: string, time: string, durationMinutes?: number) => Promise<void>; busy: boolean; notify: (message: string) => void }) {
   const [date, setDate] = useState(todayValue());
   const [courtId, setCourtId] = useState("");
   const [time, setTime] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState(60);
   const courts = data?.courts ?? [];
+  const readyCourts = courts.filter((court) => court.status === "Available");
   const activeCourtId = courtId || String(courts.find((court) => court.status === "Available")?.id ?? "");
   const selectedCourt = courts.find((court) => court.id === activeCourtId);
+  const reservedTimes = bookingTimes.filter((slot) =>
+    isSlotBooked(data?.bookings ?? [], activeCourtId, date, slot, durationMinutes));
+  const openSlots = bookingTimes.length - reservedTimes.length;
+  const customTimeBooked = Boolean(time && isSlotBooked(data?.bookings ?? [], activeCourtId, date, time, durationMinutes));
   const submit = () => {
     if (!selectedCourt || !time || selectedCourt.status !== "Available") { notify("Choose an available court, date and time."); return; }
-    void onBook(activeCourtId, date, time);
+    if (customTimeBooked) { notify("That time overlaps with a booking. Choose another start time."); return; }
+    void onBook(activeCourtId, date, time, durationMinutes);
   };
   return <main className="public-section"><div className="section-title"><div><span className="eyebrow">FACILITIES</span><h2>Courts & availability</h2><p>Choose an available slot. Reservations are shared with the club in real time.</p></div></div>
-    <div className="court-layout"><div className="court-list">{courts.map((court) => <button key={court.id} className={`court-row ${court.id === activeCourtId ? "selected" : ""}`} disabled={court.status !== "Available"} onClick={() => { setCourtId(court.id); setTime(""); }}><span><strong>{court.name}</strong><small>{court.sport} · {money(court.price)} / hour</small></span><span className={`status-pill ${court.status === "Available" ? "success" : "warning"}`}>{court.status}</span></button>)}</div>
-      <section className="card booking-card"><h3>Book a court</h3><label className="form-field">Date<input type="date" min={todayValue()} value={date} onChange={(event) => { setDate(event.target.value); setTime(""); }} /></label>
+    <div className="availability-strip">
+      <article><span className="availability-icon"><CalendarDays size={17} /></span><strong>{readyCourts.length}</strong><small>courts ready</small></article>
+      <article><span className="availability-icon"><Clock3 size={17} /></span><strong>{openSlots}</strong><small>listed starts available</small></article>
+      <article><span className="availability-icon"><Check size={17} /></span><strong>{reservedTimes.length}</strong><small>reserved for this date</small></article>
+    </div>
+    <div className="court-layout"><div className="court-list"><div className="court-list-heading"><span>Choose your facility</span><strong>{courts.length} courts</strong></div>{courts.map((court) => <button key={court.id} className={`court-row ${court.id === activeCourtId ? "selected" : ""}`} aria-pressed={court.id === activeCourtId} disabled={court.status !== "Available"} onClick={() => { setCourtId(court.id); setTime(""); }}><span className="court-row-icon"><CalendarDays size={18} /></span><span><strong>{court.name}</strong><small>{court.sport} · {money(court.price)} / hour</small></span><span className={`status-pill ${court.status === "Available" ? "success" : "warning"}`}>{court.status}</span></button>)}
+      {!courts.length && <p className="empty-inline">No courts are available in the catalog.</p>}
+      <div className="court-note"><Check size={16} /><span><strong>Live availability</strong><small>Open slots update when a reservation is confirmed.</small></span></div>
+    </div>
+      <section className="card booking-card"><div className="booking-card-title"><span className="eyebrow">RESERVE YOUR SESSION</span><h3>Book a court</h3><p>Choose your session length and a 30-minute start time.</p></div><label className="form-field">Date<input type="date" min={todayValue()} value={date} onChange={(event) => { setDate(event.target.value); setTime(""); }} /></label>
+        <label className="form-field">Session length<select value={durationMinutes} onChange={(event) => { setDurationMinutes(Number(event.target.value)); setTime(""); }}><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={90}>1.5 hours</option><option value={120}>2 hours</option></select></label>
         <p className="field-label">Available start times</p><div className="time-options">{bookingTimes.map((slot) => {
-          const booked = isSlotBooked(data?.bookings ?? [], activeCourtId, date, slot);
-          return <button key={slot} className={time === slot ? "selected" : ""} disabled={booked || !selectedCourt || selectedCourt.status !== "Available"} onClick={() => setTime(slot)}>{slot}{booked && <small>Reserved</small>}</button>;
-        })}</div><button className="primary-button full-width" disabled={busy || !time} onClick={submit}>{busy ? "Confirming…" : `Confirm booking${selectedCourt ? ` · ${money(selectedCourt.price)}` : ""}`}</button>
+          const booked = isSlotBooked(data?.bookings ?? [], activeCourtId, date, slot, durationMinutes);
+          return <button key={slot} className={time === slot ? "selected" : ""} aria-pressed={time === slot} disabled={booked || !selectedCourt || selectedCourt.status !== "Available"} onClick={() => setTime(slot)}>{slot}{booked && <small>Reserved</small>}</button>;
+        })}</div>
+        <label className="form-field">Custom start time<input type="time" step={1800} value={time} onChange={(event) => setTime(event.target.value)} /></label>
+        {openSlots === 0 && <p className="slot-full-note" role="status">All listed start times are booked. Try a custom time or another date.</p>}
+        {customTimeBooked && <p className="inline-error" role="alert">This time overlaps with an existing booking.</p>}
+        {time && selectedCourt && <div className="booking-summary"><span><CalendarDays size={15} />{displayDate(date)}</span><span><Clock3 size={15} />{time} · {durationMinutes} min</span><strong>{money(selectedCourt.price * durationMinutes / 60)}</strong></div>}
+        <button className="primary-button full-width" disabled={busy || !time || customTimeBooked || !selectedCourt || selectedCourt.status !== "Available"} onClick={submit}>{busy ? "Confirming…" : !time && openSlots === 0 ? "No listed starts available" : `Confirm booking${selectedCourt ? ` · ${money(selectedCourt.price * durationMinutes / 60)}` : ""}`}</button>
       </section>
     </div>
   </main>;
 }
 
-function PublicShop({ data }: { data: PublicState | null }) {
-  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">PLAY & PERFORM</span><h2>Club shop</h2><p>Browse the current club catalog.</p></div></div>
-    <div className="product-grid">{(data?.products ?? []).map((product) => <article className="public-product" key={product.id}><div className={`product-art product-art-${product.category.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}><img src={productArtwork(product)} alt={product.name} loading="lazy" decoding="async" /><i /><i /></div><span className="eyebrow">{product.category}</span><h3>{product.name}</h3><strong>{money(product.price)}</strong></article>)}</div>
-    {!data?.products.length && <p className="empty-inline">The catalog is being synchronized. Check back soon.</p>}
+function PublicShop({ memberMode, member, notify }: {
+  memberMode: boolean; member: PublicState["member"]; notify: (message: string) => void;
+}) {
+  const [products, setProducts] = useState<ShopProduct[]>([]);
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [contact, setContact] = useState({ name: member?.name ?? "", email: member?.email ?? "", phone: member?.phone ?? "" });
+  const [paymentProvider, setPaymentProvider] = useState<"manual" | "razorpay">("manual");
+  const [discountPercent, setDiscountPercent] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmation, setConfirmation] = useState<{
+    orderNumber: string; totalAmount: number; discountAmount: number; paidOnline: boolean;
+  } | null>(null);
+  const idempotencyKey = useRef(crypto.randomUUID());
+  const refresh = useCallback(async () => {
+    setError("");
+    try {
+      const response = await apiRequest<ApiEnvelope<ShopProduct[]>>("/api/v1/shop/products");
+      setProducts(response.data);
+      const config = await apiRequest<ApiEnvelope<{ provider: "manual" | "razorpay" }>>("/api/v1/shop/checkout-config");
+      setPaymentProvider(config.data.provider);
+      if (memberMode) {
+        const discount = await apiRequest<ApiEnvelope<{ discountPercent: number }>>("/api/v1/shop/member-discount");
+        setDiscountPercent(discount.data.discountPercent);
+      } else {
+        setDiscountPercent(0);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load the live shop catalog");
+    } finally {
+      setLoading(false);
+    }
+  }, [memberMode]);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const cartItems = products.filter((product) => (cart[product.id] ?? 0) > 0);
+  const subtotal = cartItems.reduce((sum, product) => sum + product.price * cart[product.id], 0);
+  const discountAmount = subtotal * discountPercent / 100;
+  const total = subtotal - discountAmount;
+  const setQuantity = (product: ShopProduct, quantity: number) => setCart((current) => {
+    const next = { ...current };
+    if (quantity <= 0) delete next[product.id];
+    else next[product.id] = Math.min(quantity, product.stock_quantity);
+    return next;
+  });
+  const placeOrder = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!cartItems.length) return;
+    setSaving(true);
+    setError("");
+    let paymentModalOpen = false;
+    try {
+      if (memberMode && !member?.id) throw new Error("Your member profile is not linked to this account.");
+      const memberCheckout = memberMode && Boolean(member?.id);
+      const response = await apiRequest<ApiEnvelope<{
+        orderNumber?: string; order_number?: string; status: string; totalAmount?: number; total_amount?: number;
+        discountAmount?: number; discount_amount?: number;
+        checkout?: { provider: "razorpay"; keyId: string; orderId: string; amountPaise: number; currency: string };
+      }>>(
+        memberCheckout ? "/api/v1/shop/orders" : "/api/v1/shop/orders/public",
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey.current },
+          body: JSON.stringify(memberCheckout ? {
+            memberId: member?.id,
+            channel: "online",
+            fulfillment: "pickup",
+            ...(paymentProvider === "razorpay" ? { paymentMethod: "online" } : {}),
+            items: cartItems.map((product) => ({ productId: product.id, quantity: cart[product.id] })),
+          } : {
+            customer: contact,
+            items: cartItems.map((product) => ({ productId: product.id, quantity: cart[product.id] })),
+          }),
+        },
+      );
+      const orderNumber = response.data.orderNumber ?? response.data.order_number;
+      const orderTotal = response.data.totalAmount ?? Number(response.data.total_amount ?? 0);
+      const actualDiscount = response.data.discountAmount ?? Number(response.data.discount_amount ?? discountAmount);
+      if (!orderNumber) throw new Error("The shop order response did not include an order number.");
+      if (response.data.checkout) {
+        await ensureRazorpayCheckout();
+        const Razorpay = window.Razorpay;
+        if (!Razorpay) throw new Error("Razorpay checkout did not initialize.");
+        paymentModalOpen = true;
+        const checkout = new Razorpay({
+          key: response.data.checkout.keyId,
+          amount: response.data.checkout.amountPaise,
+          currency: response.data.checkout.currency,
+          order_id: response.data.checkout.orderId,
+          name: "Champions Club",
+          description: `Shop order ${orderNumber}`,
+          prefill: { name: contact.name, email: contact.email, contact: contact.phone },
+          handler: (payment: RazorpayPaymentResult) => {
+            void apiRequest<ApiEnvelope<{ orderNumber: string; status: string; totalAmount: number }>>(
+              "/api/v1/shop/orders/public/verify-payment",
+              { method: "POST", body: JSON.stringify(payment) },
+            ).then(async (verified) => {
+              setConfirmation({
+                orderNumber: verified.data.orderNumber,
+                totalAmount: verified.data.totalAmount,
+                discountAmount: actualDiscount,
+                paidOnline: true,
+              });
+              setCart({});
+              idempotencyKey.current = crypto.randomUUID();
+              notify(`Payment received for order ${verified.data.orderNumber}`);
+              await refresh();
+            }).catch((cause: unknown) => {
+              setError(cause instanceof Error ? cause.message : "Payment could not be verified. Contact the club before retrying.");
+            }).finally(() => setSaving(false));
+          },
+          modal: { ondismiss: () => { paymentModalOpen = false; setSaving(false); } },
+        });
+        checkout.on("payment.failed", () => {
+          paymentModalOpen = false;
+          setError("Payment did not complete. Your cart is unchanged; retry checkout or contact the club.");
+          setSaving(false);
+        });
+        checkout.open();
+        await refresh();
+      } else {
+        setConfirmation({
+          orderNumber,
+          totalAmount: orderTotal,
+          discountAmount: actualDiscount,
+          paidOnline: false,
+        });
+        setCart({});
+        idempotencyKey.current = crypto.randomUUID();
+        notify(`Order ${orderNumber} reserved for club pickup`);
+        await refresh();
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not place your order");
+    } finally {
+      if (!paymentModalOpen) setSaving(false);
+    }
+  };
+  const quantity = Object.values(cart).reduce((sum, value) => sum + value, 0);
+
+  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">PLAY & PERFORM</span><h2>Club shop</h2><p>Shop club essentials, apply member savings and choose secure online payment or pickup payment.</p></div><span className="shop-cart-indicator"><ShoppingCart size={16} />{quantity} {quantity === 1 ? "item" : "items"}</span></div>
+    {confirmation && <section className="order-confirmation" role="status"><CircleCheck size={22} /><div><strong>{confirmation.paidOnline ? "Payment confirmed" : "Pickup order reserved"}</strong><span>Order {confirmation.orderNumber} · {money(confirmation.totalAmount)}{confirmation.paidOnline ? " paid online." : " due at the club counter."}</span>{confirmation.discountAmount > 0 && <small>You saved {money(confirmation.discountAmount)} with your member discount.</small>}<small>Bring your order number when you collect your items.</small></div><button className="icon-button" aria-label="Dismiss order confirmation" onClick={() => setConfirmation(null)}><X size={17} /></button></section>}
+    {error && <p className="inline-error public-error" role="alert">{error}</p>}
+    <div className="shop-layout">
+      <section className="shop-catalog"><div className="shop-catalog-heading"><h3>Available equipment</h3><span>{products.length} products</span></div>
+        {loading ? <p className="empty-inline">Loading live catalog…</p> : products.length ? <div className="product-grid">{products.map((product) => {
+          const inCart = cart[product.id] ?? 0;
+          const available = product.stock_quantity > 0;
+          return <article className="public-product" key={product.id}>
+            <div className={`product-art product-art-${product.category.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}><img src={productArtwork(product)} alt={product.name} loading="lazy" decoding="async" /></div>
+            <span className="eyebrow">{product.category}</span><h3>{product.name}</h3><p className="product-description">{product.description || "Ready for your next match."}</p>
+            <div className="product-purchase-row"><strong>{money(product.price)}</strong><span className={available ? "stock-available" : "stock-unavailable"}>{available ? `${product.stock_quantity} in stock` : "Sold out"}</span></div>
+            {inCart > 0 ? <div className="quantity-control"><button aria-label={`Remove one ${product.name}`} onClick={() => setQuantity(product, inCart - 1)}><Minus size={14} /></button><strong>{inCart}</strong><button aria-label={`Add one ${product.name}`} disabled={inCart >= product.stock_quantity} onClick={() => setQuantity(product, inCart + 1)}><Plus size={14} /></button></div> :
+              <button className="secondary-button full-width" disabled={!available} onClick={() => setQuantity(product, 1)}><ShoppingCart size={15} />{available ? "Add to bag" : "Out of stock"}</button>}
+          </article>;
+        })}</div> : <p className="empty-inline">{error ? "The catalog is temporarily unavailable." : "No active products are available."}</p>}
+      </section>
+      <aside className="card shop-cart-panel"><div className="card-header"><div><span className="eyebrow">PICKUP CART</span><h3>Your bag</h3><p>{paymentProvider === "razorpay" ? "Pay securely now, then collect your items." : "Reserve your items and pay at pickup."}</p></div><ShoppingCart size={19} /></div>
+        <div className="shop-cart-lines">{cartItems.map((product) => <div key={product.id}><span>{product.name} × {cart[product.id]}</span><strong>{money(product.price * cart[product.id])}</strong></div>)}
+          {!cartItems.length && <p className="empty-inline">Your bag is empty. Add an item to continue.</p>}</div>
+        {discountAmount > 0 && <div className="shop-discount-line"><span>Member discount ({discountPercent}%)</span><strong>−{money(discountAmount)}</strong></div>}
+        <div className="cart-total"><span>Order total</span><strong>{money(total)}</strong></div>
+        <form className="shop-checkout-form" onSubmit={(event) => void placeOrder(event)}>
+          {!memberMode && <>
+            <label className="form-field">Name<input required minLength={2} maxLength={120} value={contact.name} onChange={(event) => setContact({ ...contact, name: event.target.value })} /></label>
+            <label className="form-field">Email<input required type="email" maxLength={254} value={contact.email} onChange={(event) => setContact({ ...contact, email: event.target.value })} /></label>
+            <label className="form-field">Phone<input required minLength={7} maxLength={20} value={contact.phone} onChange={(event) => setContact({ ...contact, phone: event.target.value })} /></label>
+          </>}
+          {paymentProvider === "manual" && <p className="pay-at-club-note"><MapPin size={14} />Items are reserved now; payment is due at pickup.</p>}
+          <button className="primary-button full-width" disabled={saving || !cartItems.length}>{saving ? "Processing…" : paymentProvider === "razorpay" ? `Pay & place order · ${money(total)}` : "Place pickup order"}</button>
+        </form>
+      </aside>
+    </div>
+    {memberMode && <p className="member-shop-note">{discountPercent > 0
+      ? `Your ${discountPercent}% active membership discount is included in the cart total.`
+      : "Your membership benefits are checked automatically at checkout."}</p>}
   </main>;
 }
 
-function productArtwork(product: PublicState["products"][number]) {
+function productArtwork(product: Pick<ShopProduct, "name" | "category"> | PublicState["products"][number]) {
   const name = product.name.toLowerCase();
   if (name.includes("racket")) return "/shop/tennis-racket.svg";
   if (name.includes("shoe") || name.includes("footwear")) return "/shop/court-shoes.svg";
@@ -949,18 +1691,223 @@ function productArtwork(product: PublicState["products"][number]) {
   return "/shop/sports-kit.svg";
 }
 
-function PublicPlans({ data }: { data: PublicState | null }) {
-  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">MEMBERSHIP</span><h2>Choose how you play</h2><p>Transparent rates and benefits for every athlete.</p></div></div>
-    <div className="plans-grid">{(data?.plans ?? []).map((plan) => <article className="plan-card" key={plan.name}><span className="eyebrow">{plan.name.toUpperCase()}</span><strong>{money(plan.price)}<small> / month</small></strong><ul><li>{plan.freeSessions} free sessions daily</li><li>{plan.courtDiscount}% court discount</li><li>{plan.shopDiscount}% shop discount</li><li>{plan.barDiscount}% cafeteria discount</li></ul></article>)}</div>
-    {!data?.plans.length && <p className="empty-inline">Membership plans will appear when club data is available.</p>}
+function PublicPlans({ memberMode }: { memberMode: boolean }) {
+  const [plans, setPlans] = useState<MembershipPlan[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState<MembershipPlan | null>(null);
+  const [registered, setRegistered] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [memberApplication, setMemberApplication] = useState<{
+    membership: { id: string; status: string; approval_status: string; plan_name: string; monthly_price: number } | null;
+    onlinePaymentAvailable: boolean;
+  } | null>(null);
+  useEffect(() => {
+    let active = true;
+    void apiRequest<ApiEnvelope<MembershipPlan[]>>("/api/v1/memberships/plans")
+      .then((response) => { if (active) setPlans(response.data); })
+      .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load membership plans"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!memberMode) return;
+    let active = true;
+    void apiRequest<ApiEnvelope<{
+      membership: { id: string; status: string; approval_status: string; plan_name: string; monthly_price: number } | null;
+      onlinePaymentAvailable: boolean;
+    }>>("/api/v1/memberships/mine")
+      .then((response) => { if (active) setMemberApplication(response.data); })
+      .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load your membership application"); });
+    return () => { active = false; };
+  }, [memberMode]);
+  const startMembershipPayment = async () => {
+    const membership = memberApplication?.membership;
+    if (!membership || !memberApplication.onlinePaymentAvailable) return;
+    setSavingPayment(true);
+    setError("");
+    let paymentModalOpen = false;
+    try {
+      const response = await apiRequest<ApiEnvelope<{
+        provider: "razorpay"; keyId: string; orderId: string; amountPaise: number; currency: string;
+      }>>(`/api/v1/memberships/${membership.id}/checkout`, { method: "POST" });
+      await ensureRazorpayCheckout();
+      const Razorpay = window.Razorpay;
+      if (!Razorpay) throw new Error("Razorpay checkout did not initialize.");
+      paymentModalOpen = true;
+      const checkout = new Razorpay({
+        key: response.data.keyId,
+        amount: response.data.amountPaise,
+        currency: response.data.currency,
+        order_id: response.data.orderId,
+        name: "Champions Club",
+        description: `${membership.plan_name} membership`,
+        handler: (payment: RazorpayPaymentResult) => {
+          void apiRequest<ApiEnvelope<unknown>>(
+            `/api/v1/memberships/${membership.id}/verify-payment`,
+            { method: "POST", body: JSON.stringify(payment) },
+          ).then(() => {
+            setMemberApplication((current) => current && current.membership
+              ? { ...current, membership: { ...current.membership, status: "active" } }
+              : current);
+            setRegistered(`${membership.plan_name} membership is active. Payment received.`);
+          }).catch((cause: unknown) => {
+            setError(cause instanceof Error ? cause.message : "Payment could not be verified. Contact the club before retrying.");
+          }).finally(() => setSavingPayment(false));
+        },
+        modal: { ondismiss: () => { paymentModalOpen = false; setSavingPayment(false); } },
+      });
+      checkout.on("payment.failed", () => {
+        paymentModalOpen = false;
+        setError("Payment did not complete. You can retry from this page.");
+        setSavingPayment(false);
+      });
+      checkout.open();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not start membership payment");
+    } finally {
+      if (!paymentModalOpen) setSavingPayment(false);
+    }
+  };
+  const application = memberApplication?.membership;
+  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">MEMBERSHIP</span><h2>Choose how you play</h2><p>Compare live plans, submit your application and pay after club approval.</p></div></div>
+    <div className="membership-process"><span><i>1</i> Choose a plan</span><ArrowRight size={15} /><span><i>2</i> Create your account</span><ArrowRight size={15} /><span><i>3</i> Club approval</span><ArrowRight size={15} /><span><i>4</i> Pay & activate</span></div>
+    {registered && <section className="order-confirmation membership-confirmation" role="status"><CircleCheck size={22} /><div><strong>Your membership update</strong><span>{registered}</span><small>Membership benefits are available once payment is confirmed.</small></div><button className="icon-button" aria-label="Dismiss membership update" onClick={() => setRegistered("")}><X size={17} /></button></section>}
+    {memberMode && application && (application.status === "pending" || application.approval_status === "rejected") && <section className="card membership-application-status" role="status">
+      <div><span className="eyebrow">YOUR APPLICATION</span><h3>{application.plan_name} membership</h3>
+        <p>{application.approval_status === "rejected"
+          ? "This application was not approved. Contact the membership desk if you need help."
+          : application.approval_status === "approved"
+          ? memberApplication?.onlinePaymentAvailable ? "Approved. Complete payment to activate your membership." : "Approved. Visit the club desk to complete payment and activate your membership."
+          : "Your application is awaiting club approval. Payment becomes available once it is approved."}</p>
+        {application.status === "pending" && application.approval_status === "approved" && memberApplication?.onlinePaymentAvailable &&
+          <button className="primary-button" disabled={savingPayment} onClick={() => void startMembershipPayment()}>{savingPayment ? "Opening secure checkout…" : `Pay ${money(application.monthly_price)} & activate`}</button>}
+      </div>
+      <span className={`status-pill ${application.approval_status === "approved" ? "success" : "warning"}`}>{application.approval_status === "rejected" ? "Rejected" : application.approval_status === "approved" ? "Approved" : "Awaiting approval"}</span>
+    </section>}
+    {error && <p className="inline-error public-error" role="alert">{error}</p>}
+    {loading ? <p className="empty-inline">Loading current membership plans…</p> : plans.length ? <div className="plans-grid">{plans.map((plan, index) => <article className={`plan-card ${index === 0 ? "featured" : ""}`} key={plan.id}>
+      <span className="eyebrow">{plan.name.toUpperCase()}</span><h3>{plan.name}</h3><p className="plan-description">{plan.description || "Membership for your active club life."}</p>
+      <strong>{money(plan.monthlyPrice)}<small> / month</small></strong>
+      <ul><li>{Number(plan.benefits.courtFreeSessionsPerDay ?? 0)} free court sessions daily</li><li>{Number(plan.benefits.courtDiscountPercent ?? 0)}% court discount</li><li>{Number(plan.benefits.shopDiscountPercent ?? 0)}% shop discount</li><li>{Number(plan.benefits.barDiscountPercent ?? 0)}% cafeteria discount</li></ul>
+      {memberMode ? <p className="member-plan-note">For plan changes or renewal, speak with the membership desk.</p> :
+        <button className="primary-button full-width" onClick={() => setSelectedPlan(plan)}>Choose {plan.name} <ArrowRight size={15} /></button>}
+    </article>)}</div> : !error && <p className="empty-inline">Membership plans will appear when the club catalog is ready.</p>}
+    {selectedPlan && <MembershipSignupDialog plan={selectedPlan} onClose={() => setSelectedPlan(null)} onComplete={(email) => { setRegistered(`${selectedPlan.name} plan application submitted for ${email}; pending club approval.`); setSelectedPlan(null); }} />}
   </main>;
 }
 
-function MemberBookings({ data, member, setView }: { data: PublicState | null; member: PublicState["member"]; setView: (view: string) => void }) {
-  const courtName = (id: string) => data?.courts.find((court) => court.id === id)?.name ?? "Court";
-  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">YOUR ACCOUNT</span><h2>My bookings</h2><p>{member?.name ?? "Member"} · upcoming reservations</p></div><button className="primary-button" onClick={() => setView("courts")}>Book a court</button></div>
-    <div className="card"><DataTable rows={(data?.memberBookings ?? []).map((booking, index) => ({ id: `booking-${index}`, court: booking.courtName ?? courtName(booking.courtId), date: displayDate(booking.date), time: booking.time, status: booking.status }))} empty="You have no upcoming bookings." /></div>
-    <section className="member-orders"><h3>Recent orders</h3><div className="card"><DataTable rows={(data?.memberOrders ?? [])} empty="No recent shop orders." /></div></section>
+function MembershipSignupDialog({ plan, onClose, onComplete }: {
+  plan: MembershipPlan; onClose: () => void; onComplete: (email: string) => void;
+}) {
+  const [values, setValues] = useState({ fullName: "", email: "", phone: "", password: "", dateOfBirth: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest<ApiEnvelope<unknown>>("/api/v1/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          ...values,
+          email: values.email.trim(),
+          fullName: values.fullName.trim(),
+          phone: values.phone.trim(),
+          planCode: plan.code,
+          role: "member",
+          ...(values.dateOfBirth ? { dateOfBirth: values.dateOfBirth } : {}),
+        }),
+      });
+      onComplete(values.email.trim());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create your membership account");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}>
+    <section className="modal membership-signup-modal" role="dialog" aria-modal="true" aria-labelledby="membership-signup-title">
+      <div className="modal-heading"><div><span className="eyebrow">MEMBERSHIP · {plan.name.toUpperCase()}</span><h2 id="membership-signup-title">Create your member account</h2><p>{money(plan.monthlyPrice)} / month · pay and activate at the club</p></div><button className="icon-button" aria-label="Close signup" disabled={saving} onClick={onClose}><X size={18} /></button></div>
+      <form onSubmit={(event) => void submit(event)}><div className="form-grid">
+        <label className="form-field">Full name<input required minLength={2} maxLength={120} autoComplete="name" value={values.fullName} onChange={(event) => setValues({ ...values, fullName: event.target.value })} /></label>
+        <label className="form-field">Email address<input required type="email" maxLength={254} autoComplete="email" value={values.email} onChange={(event) => setValues({ ...values, email: event.target.value })} /></label>
+        <label className="form-field">Phone number<input required minLength={7} maxLength={20} autoComplete="tel" value={values.phone} onChange={(event) => setValues({ ...values, phone: event.target.value })} /></label>
+        <label className="form-field">Date of birth{plan.code === "JUNIOR" ? " (required)" : " (optional)"}<input required={plan.code === "JUNIOR"} type="date" value={values.dateOfBirth} onChange={(event) => setValues({ ...values, dateOfBirth: event.target.value })} /></label>
+        <label className="form-field form-field-wide">Password<input required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={values.password} onChange={(event) => setValues({ ...values, password: event.target.value })} /><small>Use at least 12 characters.</small></label>
+      </div><p className="login-error" role="alert">{error}</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Creating account…" : "Create account & request plan"}</button></div></form>
+    </section>
+  </div>;
+}
+
+function MemberBookings({ member, setView }: { member: PublicState["member"]; setView: (view: string) => void }) {
+  const [activity, setActivity] = useState<MemberActivity | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    apiRequest<ApiEnvelope<MemberActivity>>("/api/v1/memberships/activity")
+      .then((response) => { if (active) setActivity(response.data); })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load your account activity.");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [reload]);
+
+  const paidTotal = activity?.payments
+    .filter((payment) => payment.status.toLowerCase() === "paid")
+    .reduce((total, payment) => total + payment.amount, 0) ?? 0;
+  const statusTone = (status: string) => {
+    const value = status.toLowerCase();
+    return ["paid", "confirmed", "completed", "active", "ready", "fulfilled"].includes(value)
+      ? "success" : ["pending", "requested", "processing"].includes(value) ? "warning" : "";
+  };
+  const statusLabel = (status: string) => status.replace(/_/g, " ");
+
+  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">YOUR ACCOUNT</span><h2>Activity &amp; history</h2><p>{member?.name ?? "Member"} · bookings, shop orders and payments</p></div><button className="primary-button" onClick={() => setView("courts")}>Book a court</button></div>
+    <div className="member-activity-stats">
+      <article className="card"><span className="activity-stat-icon"><CalendarDays size={18} /></span><strong>{loading ? "—" : activity?.bookings.length ?? 0}</strong><span>Bookings</span></article>
+      <article className="card"><span className="activity-stat-icon"><Package size={18} /></span><strong>{loading ? "—" : activity?.orders.length ?? 0}</strong><span>Shop orders</span></article>
+      <article className="card"><span className="activity-stat-icon"><CircleDollarSign size={18} /></span><strong>{loading ? "—" : money(paidTotal)}</strong><span>Paid to date</span></article>
+    </div>
+    {loading && <div className="card activity-message" role="status">Loading your account activity…</div>}
+    {error && <div className="card activity-message activity-error" role="alert"><span>{error}</span><button className="secondary-button" onClick={() => setReload((value) => value + 1)}>Try again</button></div>}
+    {!loading && !error && activity && <div className="member-activity-grid">
+      <section className="card activity-panel"><header><div><h3>Bookings</h3><p>Your court reservations and their current status</p></div><span>{activity.bookings.length}</span></header>
+        <div className="activity-list">{activity.bookings.map((booking) => <article className="activity-row" key={booking.id}>
+          <span className="activity-icon"><CalendarDays size={17} /></span>
+          <div className="activity-copy"><strong>{booking.courtName}</strong><small>{displayDate(booking.date)} · {booking.time} · {booking.durationMinutes} min</small></div>
+          <div className="activity-end"><span className={`status-pill ${statusTone(booking.status)}`}>{statusLabel(booking.status)}</span><strong>{money(booking.amount)}</strong></div>
+        </article>)}
+          {!activity.bookings.length && <p className="activity-empty">No bookings yet. Find a court and reserve your first session.</p>}
+        </div>
+      </section>
+      <section className="card activity-panel"><header><div><h3>Shop orders</h3><p>Order requests, fulfillment and discounts</p></div><span>{activity.orders.length}</span></header>
+        <div className="activity-list">{activity.orders.map((order) => <article className="activity-row" key={order.id}>
+          <span className="activity-icon"><Package size={17} /></span>
+          <div className="activity-copy"><strong>{order.orderNumber}</strong><small>{displayDate(order.createdAt)} · {order.fulfillment.replace(/_/g, " ")}</small><small>{order.items.map((item) => `${item.name} × ${item.quantity}`).join(", ")}</small>
+            {order.discountAmount > 0 && <small className="activity-discount">Membership savings: {money(order.discountAmount)}</small>}</div>
+          <div className="activity-end"><span className={`status-pill ${statusTone(order.status)}`}>{statusLabel(order.status)}</span><strong>{money(order.totalAmount)}</strong></div>
+        </article>)}
+          {!activity.orders.length && <p className="activity-empty">Your shop orders will appear here after checkout.</p>}
+        </div>
+      </section>
+      <section className="card activity-panel"><header><div><h3>Payments &amp; receipts</h3><p>Recorded payments, payment status and receipts</p></div><span>{activity.payments.length}</span></header>
+        <div className="activity-list">{activity.payments.map((payment, index) => <article className="activity-row" key={`${payment.reference ?? payment.sourceType}-${index}`}>
+          <span className="activity-icon"><CircleDollarSign size={17} /></span>
+          <div className="activity-copy"><strong>{payment.description}</strong><small>{displayDate(payment.createdAt)} · {payment.method} · {payment.sourceType.replace(/_/g, " ")}</small><small>Reference: {payment.reference ?? "Unavailable"}</small></div>
+          <div className="activity-end"><span className={`status-pill ${statusTone(payment.status)}`}>{statusLabel(payment.status)}</span><strong>{money(payment.amount)}</strong></div>
+        </article>)}
+          {!activity.payments.length && <p className="activity-empty">Payments and receipts will appear here when recorded.</p>}
+        </div>
+      </section>
+    </div>}
   </main>;
 }
 
@@ -968,14 +1915,39 @@ function MemberAccount({ member }: { member: PublicState["member"] }) {
   return <main className="public-section"><div className="section-title"><div><span className="eyebrow">YOUR ACCOUNT</span><h2>Membership details</h2></div></div>
     <section className="member-account card">{[
       ["Member", member?.name], ["Member ID", member?.id], ["Plan", member?.plan],
+      ["Membership status", member?.membershipStatus === "pending" ? "Pending payment at club" : member?.membershipStatus],
       ["Renewal date", member?.expiry ? displayDate(member.expiry) : null], ["Phone", member?.phone],
       ["Outstanding balance", member?.balance == null ? null : money(member.balance)],
     ].map(([label, value]) => <div className="member-row" key={label}><span>{label}</span><strong>{value ?? "Details unavailable"}</strong></div>)}</section>
   </main>;
 }
 
-function ClubOverview() {
-  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">ABOUT CHAMPIONS CLUB</span><h2>Find your next game</h2><p>A welcoming home for tennis, padel, badminton and cricket.</p></div></div><div className="feature-grid">{["Professional courts", "Sports shop", "Cafeteria", "A club community"].map((item) => <article className="feature-card" key={item}><h3>{item}</h3><p>Designed for your next match, training session, or visit with friends.</p></article>)}</div></main>;
+function ClubOverview({ data, setView }: { data: PublicState | null; setView: (view: string) => void }) {
+  const available = data?.courts.filter((court) => court.status === "Available").length ?? 0;
+  const sports = new Set((data?.courts ?? []).map((court) => court.sport)).size;
+  const features = [
+    { title: "Courts for every game", text: "Explore the club's sports and reserve a time that fits your day.", value: `${available} courts available`, view: "courts", icon: CalendarDays },
+    { title: "A considered club shop", text: "Find rackets, shoes, balls and essentials, with member savings at checkout.", value: `${data?.products.length ?? 0} products`, view: "shop", icon: ShoppingBag },
+    { title: "Membership that fits", text: "Compare club plans, apply online and pay once your application is approved.", value: `${data?.plans.length ?? 0} plans`, view: "plans", icon: Users },
+    { title: "Refuel between matches", text: "Take a break and enjoy food and drinks from the club cafeteria.", value: "Cafe on site", view: "home", icon: Coffee },
+  ];
+  return <main className="public-section"><div className="section-title"><div><span className="eyebrow">ABOUT CHAMPIONS CLUB</span><h2>More than a place to play</h2><p>A welcoming sports community built around great games, good company and the little details that make every visit easier.</p></div></div>
+    <div className="club-overview-hero"><div className="club-overview-copy"><span className="eyebrow">PLAY · CONNECT · RECHARGE</span><h3>Your club, all in one place.</h3><p>From finding a court to choosing a membership and getting match-ready, Champions Club brings your sports day together around the way you like to play.</p><button className="primary-button" onClick={() => setView("courts")}>Find your next court <ArrowRight size={15} /></button></div>
+      <div className="club-overview-art"><img src="/club-hero.svg" alt="Illustration of the courts and welcoming spaces at Champions Club" /><div className="club-live-stats"><span><strong>{sports}</strong> sports to explore</span><span><strong>{available}</strong> courts available</span><span><strong>{data?.plans.length ?? 0}</strong> ways to join</span></div></div>
+    </div>
+    <div className="club-feature-grid">{features.map(({ title, text: detail, value, view, icon: Icon }) => <article className="club-feature-card" key={title}>
+      <span className="club-feature-icon"><Icon size={20} /></span><span className="club-feature-value">{value}</span><h3>{title}</h3><p>{detail}</p>
+      <button className="text-button" onClick={() => setView(view)}>{view === "home" ? "Explore the club" : "Explore"} <ArrowRight size={14} /></button>
+    </article>)}</div>
+    <section className="club-journey">
+      <div className="club-journey-heading"><span className="eyebrow">YOUR CLUB ROUTINE</span><h3>Make a day of it.</h3><p>Build your visit around the things you enjoy, all from one place.</p></div>
+      <div className="club-journey-steps">
+        <article><span>01</span><h4>Pick your game</h4><p>Check live court availability and reserve a suitable time.</p><button className="text-button" onClick={() => setView("courts")}>Explore courts <ArrowRight size={14} /></button></article>
+        <article><span>02</span><h4>Find your people</h4><p>Compare membership plans and see the benefits available to members.</p><button className="text-button" onClick={() => setView("plans")}>Explore plans <ArrowRight size={14} /></button></article>
+        <article><span>03</span><h4>Get match-ready</h4><p>Browse club essentials, enjoy member savings and collect your order at the club.</p><button className="text-button" onClick={() => setView("shop")}>Visit the shop <ArrowRight size={14} /></button></article>
+      </div>
+    </section>
+  </main>;
 }
 
 export default App;

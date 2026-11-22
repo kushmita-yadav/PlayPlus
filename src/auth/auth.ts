@@ -34,6 +34,7 @@ export const registerSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   phone: z.string().trim().min(7).max(20),
   dateOfBirth: z.string().date().optional(),
+  planCode: z.string().trim().min(2).max(30).transform((value) => value.toUpperCase()).optional(),
   role: z.enum(["member", "front_desk", "staff", "manager", "admin"]).optional().default("member"),
 });
 
@@ -44,6 +45,7 @@ export type AccountInput = {
   role: "member" | "front_desk" | "staff" | "manager" | "admin";
   phone?: string;
   dateOfBirth?: string;
+  planCode?: string;
 };
 
 export async function registerAccount(input: AccountInput) {
@@ -53,6 +55,35 @@ export async function registerAccount(input: AccountInput) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (input.planCode && input.role !== "member") {
+      throw new ApiError(403, "Only member accounts may select a membership plan", "MEMBER_PLAN_REQUIRED");
+    }
+    const plan = input.planCode
+      ? await client.query(
+        "SELECT id, code, benefits FROM membership_plans WHERE code=$1 AND is_active=true",
+        [input.planCode],
+      )
+      : null;
+    if (input.planCode && !plan?.rowCount) {
+      throw new ApiError(404, "Membership plan not found", "PLAN_NOT_FOUND");
+    }
+    const maximumAge = plan?.rows[0].benefits?.maxAge;
+    if (maximumAge !== undefined) {
+      if (!input.dateOfBirth) {
+        throw new ApiError(400, "Date of birth is required for this membership plan", "DATE_OF_BIRTH_REQUIRED");
+      }
+      const birth = new Date(`${input.dateOfBirth}T00:00:00Z`);
+      const today = new Date();
+      if (birth > today) {
+        throw new ApiError(400, "Date of birth cannot be in the future", "DATE_OF_BIRTH_INVALID");
+      }
+      let age = today.getUTCFullYear() - birth.getUTCFullYear();
+      if (today.getUTCMonth() < birth.getUTCMonth() ||
+          (today.getUTCMonth() === birth.getUTCMonth() && today.getUTCDate() < birth.getUTCDate())) age--;
+      if (age >= Number(maximumAge)) {
+        throw new ApiError(400, "This membership plan is only available to younger applicants", "MEMBERSHIP_AGE_INVALID");
+      }
+    }
     const existing = await client.query(
       "SELECT id FROM accounts WHERE lower(email)=lower($1) FOR UPDATE",
       [input.email],
@@ -67,6 +98,8 @@ export async function registerAccount(input: AccountInput) {
     );
     if (!result.rowCount) throw new ApiError(500, "Account role could not be assigned", "ROLE_MISSING");
     const account = result.rows[0];
+    let memberId: string | undefined;
+    let membership: { id: string; status: string } | undefined;
     if (input.role === "member") {
       const existingMember = await client.query(
         `SELECT id FROM members
@@ -77,23 +110,53 @@ export async function registerAccount(input: AccountInput) {
         [input.email],
       );
       if (existingMember.rowCount) {
+        memberId = String(existingMember.rows[0].id);
         await client.query(
           "UPDATE members SET account_id=$2, updated_at=now() WHERE id=$1",
-          [existingMember.rows[0].id, account.id],
+          [memberId, account.id],
         );
       } else {
         if (!input.phone) throw new ApiError(400, "A phone number is required to create a member profile", "PHONE_REQUIRED");
         const memberNumber = `CC-${new Date().getUTCFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
-        await client.query(
+        const member = await client.query(
           `INSERT INTO members
              (account_id, member_number, full_name, phone, email, date_of_birth)
-           VALUES ($1,$2,$3,$4,lower($5),$6)`,
+           VALUES ($1,$2,$3,$4,lower($5),$6)
+           RETURNING id`,
           [account.id, memberNumber, input.fullName, input.phone, input.email, input.dateOfBirth ?? null],
+        );
+        memberId = String(member.rows[0].id);
+      }
+      if (input.planCode && memberId && plan) {
+        const currentMembership = await client.query(
+          "SELECT id FROM membership_records WHERE member_id=$1 AND status IN ('active','pending')",
+          [memberId],
+        );
+        if (currentMembership.rowCount) {
+          throw new ApiError(409, "This member already has an active or pending membership", "MEMBERSHIP_ALREADY_EXISTS");
+        }
+        const enrollment = await client.query(
+          `INSERT INTO membership_records (member_id, plan_id, starts_at, expires_at, status)
+           VALUES ($1,$2,now(),now()+interval '1 month','pending')
+           RETURNING id, status`,
+          [memberId, plan.rows[0].id],
+        );
+        membership = enrollment.rows[0];
+        await client.query(
+          `INSERT INTO membership_history (member_id, membership_record_id, action, to_plan_id, note)
+           VALUES ($1,$2,'registered',$3,'Awaiting club approval')`,
+          [memberId, enrollment.rows[0].id, plan.rows[0].id],
         );
       }
     }
     await client.query("COMMIT");
-    return { id: account.id, email: account.email, fullName: account.full_name, role: input.role };
+    return {
+      id: account.id,
+      email: account.email,
+      fullName: account.full_name,
+      role: input.role,
+      ...(membership ? { membership } : {}),
+    };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

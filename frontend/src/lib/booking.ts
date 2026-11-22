@@ -13,6 +13,7 @@ export function isSlotBooked(
   courtId: string,
   date: string,
   time: string,
+  durationMinutes = 60,
 ): boolean {
   const [hour, minute] = time.split(":").map(Number);
   const slotStart = hour * 60 + minute;
@@ -24,7 +25,7 @@ export function isSlotBooked(
     const [bookedHour, bookedMinute] = booking.time.split(":").map(Number);
     const bookedStart = bookedHour * 60 + bookedMinute;
     const bookedEnd = bookedStart + (booking.durationMinutes || 60);
-    return slotStart < bookedEnd && bookedStart < slotStart + 60;
+    return slotStart < bookedEnd && bookedStart < slotStart + durationMinutes;
   });
 }
 

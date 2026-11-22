@@ -6,6 +6,11 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.string().url().optional(),
   JWT_SECRET: z.string().min(32).optional(),
+  PAYMENT_PROVIDER: z.enum(["manual", "razorpay"]).default("manual"),
+  RAZORPAY_KEY_ID: z.string().trim().optional().transform((value) => value || undefined),
+  RAZORPAY_KEY_SECRET: z.string().trim().optional().transform((value) => value || undefined),
+  GROQ_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
+  GROQ_MODEL: z.string().trim().min(1).default("openai/gpt-oss-20b"),
   CLUB_TIMEZONE: z.string().default("Asia/Kolkata"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   DATABASE_SSL: z.enum(["true", "false"]).default("false"),
@@ -20,6 +25,13 @@ const envSchema = z.object({
   }
   if (value.DATABASE_SSL !== "true") {
     context.addIssue({ code: "custom", path: ["DATABASE_SSL"], message: "must be enabled in production" });
+  }
+  if (value.PAYMENT_PROVIDER === "razorpay" && (!value.RAZORPAY_KEY_ID || !value.RAZORPAY_KEY_SECRET)) {
+    context.addIssue({
+      code: "custom",
+      path: ["RAZORPAY_KEY_ID"],
+      message: "RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are required when PAYMENT_PROVIDER=razorpay",
+    });
   }
 });
 

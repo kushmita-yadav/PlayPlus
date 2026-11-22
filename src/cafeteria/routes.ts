@@ -21,7 +21,10 @@ const orderSchema = z.object({
   items: z.array(z.object({
     menuItemId: z.string().uuid(),
     quantity: z.coerce.number().int().min(1).max(100),
-  })).min(1).max(100),
+  })).min(1).max(100).refine(
+    (items) => new Set(items.map((item) => item.menuItemId)).size === items.length,
+    "Each menu item may only appear once",
+  ),
 });
 
 function db() {
@@ -67,12 +70,38 @@ cafeteriaRouter.patch("/tables/:tableId/status", requireAuth, requirePermission(
     const input = z.object({
       status: z.enum(["available", "occupied", "reserved"]),
     }).parse(req.body);
+    if (input.status !== "occupied") {
+      const openTab = await db().query(
+        "SELECT id FROM customer_tabs WHERE table_id=$1 AND status='open' LIMIT 1",
+        [req.params.tableId],
+      );
+      if (openTab.rowCount) throw new ApiError(409, "Settle the open table tab before changing its status", "TABLE_HAS_OPEN_TAB");
+    }
     const result = await db().query(
       "UPDATE cafeteria_tables SET status=$2 WHERE id=$1 RETURNING *",
       [req.params.tableId, input.status],
     );
     if (!result.rowCount) throw new ApiError(404, "Table not found", "TABLE_NOT_FOUND");
     res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+cafeteriaRouter.get("/tabs", requireAuth, requirePermission("bar.manage"), async (_req, res, next) => {
+  try {
+    const result = await db().query(
+      `SELECT t.id, t.guest_name, t.table_id, ct.table_number,
+              COALESCE(sum(o.total_amount) FILTER (WHERE o.status <> 'cancelled'),0)::numeric AS balance,
+              t.opened_at
+       FROM customer_tabs t
+       LEFT JOIN cafeteria_tables ct ON ct.id=t.table_id
+       LEFT JOIN cafeteria_orders o ON o.tab_id=t.id
+       WHERE t.status='open'
+       GROUP BY t.id, ct.table_number
+       ORDER BY t.opened_at`,
+    );
+    res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     next(error);
   }
@@ -115,7 +144,9 @@ cafeteriaRouter.post("/tables", requireAuth, requirePermission("bar.manage"), as
 });
 
 cafeteriaRouter.post("/tabs", requireAuth, requirePermission("bar.manage"), async (req, res, next) => {
+  const client = pool ? await pool.connect() : null;
   try {
+    if (!client) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");
     const input = z.object({
       memberId: z.string().uuid().optional(),
       tableId: z.string().uuid().optional(),
@@ -124,17 +155,37 @@ cafeteriaRouter.post("/tabs", requireAuth, requirePermission("bar.manage"), asyn
     if (!input.memberId && !input.guestName) {
       throw new ApiError(400, "Member or guest name is required", "TAB_OWNER_REQUIRED");
     }
-    const result = await db().query(
+    await client.query("BEGIN");
+    if (input.tableId) {
+      const table = await client.query(
+        "SELECT id, status FROM cafeteria_tables WHERE id=$1 FOR UPDATE",
+        [input.tableId],
+      );
+      if (!table.rowCount) throw new ApiError(404, "Table not found", "TABLE_NOT_FOUND");
+      if (table.rows[0].status === "reserved") {
+        throw new ApiError(409, "Reserved tables cannot open a guest tab", "TABLE_RESERVED");
+      }
+      const openTab = await client.query(
+        "SELECT id FROM customer_tabs WHERE table_id=$1 AND status='open' LIMIT 1",
+        [input.tableId],
+      );
+      if (openTab.rowCount) throw new ApiError(409, "This table already has an open tab", "TABLE_HAS_OPEN_TAB");
+    }
+    const result = await client.query(
       `INSERT INTO customer_tabs (member_id, table_id, guest_name)
        VALUES ($1,$2,$3) RETURNING *`,
       [input.memberId ?? null, input.tableId ?? null, input.guestName ?? null],
     );
     if (input.tableId) {
-      await db().query("UPDATE cafeteria_tables SET status='occupied' WHERE id=$1", [input.tableId]);
+      await client.query("UPDATE cafeteria_tables SET status='occupied' WHERE id=$1", [input.tableId]);
     }
+    await client.query("COMMIT");
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
+    await client?.query("ROLLBACK");
     next(error);
+  } finally {
+    client?.release();
   }
 });
 
@@ -155,6 +206,17 @@ cafeteriaRouter.post("/orders", requireAuth, requirePermission("bar.manage"), as
       }
     }
     await client.query("BEGIN");
+
+    if (input.tableId) {
+      const table = await client.query(
+        "SELECT id, status FROM cafeteria_tables WHERE id=$1 FOR UPDATE",
+        [input.tableId],
+      );
+      if (!table.rowCount) throw new ApiError(404, "Table not found", "TABLE_NOT_FOUND");
+      if (table.rows[0].status === "reserved") {
+        throw new ApiError(409, "Reserved tables cannot receive a walk-in order", "TABLE_RESERVED");
+      }
+    }
 
     if (input.tabId) {
       const tab = await client.query(
@@ -211,6 +273,9 @@ cafeteriaRouter.post("/orders", requireAuth, requirePermission("bar.manage"), as
         "INSERT INTO cafeteria_order_items (order_id, menu_item_id, quantity, unit_price, line_total) VALUES ($1,$2,$3,$4,$5)",
         [order.rows[0].id, item.id, item.quantity, item.unitPrice, item.lineTotal],
       );
+    }
+    if (input.tableId) {
+      await client.query("UPDATE cafeteria_tables SET status='occupied' WHERE id=$1", [input.tableId]);
     }
     await client.query("COMMIT");
     res.status(201).json({ success: true, data: order.rows[0] });

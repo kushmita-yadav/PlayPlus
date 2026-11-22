@@ -60,7 +60,8 @@
                   "password": { "type": "string", "minLength": 12 },
                   "fullName": { "type": "string" },
                   "phone": { "type": "string", "minLength": 7, "maxLength": 20 },
-                  "dateOfBirth": { "type": "string", "format": "date" }
+                  "dateOfBirth": { "type": "string", "format": "date" },
+                  "planCode": { "type": "string", "description": "Optional active plan to request; club approval is required before payment." }
                 }
               }
             }
@@ -68,7 +69,8 @@
         },
         "responses": {
           "201": { "description": "Member account created" },
-          "403": { "description": "Role assignment denied" }
+          "403": { "description": "Role assignment denied" },
+          "409": { "description": "Email or membership already exists" }
         }
       }
     },
@@ -124,6 +126,97 @@
         "responses": { "200": { "description": "Plans returned" } }
       }
     },
+    "/memberships/mine": {
+      "get": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Read the signed-in member's latest application and approval status",
+        "responses": { "200": { "description": "Membership state returned" }, "403": { "description": "Member access required" } }
+      }
+    },
+    "/memberships/activity": {
+      "get": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Read the signed-in member's bookings, shop orders, and payment history",
+        "responses": {
+          "200": { "description": "Member activity returned" },
+          "403": { "description": "Member access required" },
+          "404": { "description": "Member profile not found" }
+        }
+      }
+    },
+    "/memberships/{membershipId}/approve": {
+      "post": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Approve a pending membership application",
+        "parameters": [
+          { "name": "membershipId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "200": { "description": "Application approved" }, "404": { "description": "Pending application not found" } }
+      }
+    },
+    "/memberships/{membershipId}/reject": {
+      "post": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Reject a pending membership application",
+        "parameters": [
+          { "name": "membershipId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "200": { "description": "Application rejected" }, "404": { "description": "Pending application not found" } }
+      }
+    },
+    "/memberships/{membershipId}/checkout": {
+      "post": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Create or reuse a Razorpay order for an approved member application",
+        "parameters": [
+          { "name": "membershipId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "201": { "description": "Checkout created" }, "409": { "description": "Application is not approved" } }
+      }
+    },
+    "/memberships/{membershipId}/verify-payment": {
+      "post": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Verify captured Razorpay payment and activate the membership",
+        "parameters": [
+          { "name": "membershipId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "200": { "description": "Payment verified and membership activated" }, "409": { "description": "Payment is not captured or does not match" } }
+      }
+    },
+    "/memberships/members": {
+      "get": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "List member profiles and their latest membership status",
+        "responses": { "200": { "description": "Member directory returned" }, "403": { "description": "Member read permission required" } }
+      }
+    },
+    "/memberships/{membershipId}/activate": {
+      "post": {
+        "tags": ["Memberships"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Record an in-person payment and activate a pending membership",
+        "parameters": [
+          { "name": "membershipId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["paymentMethod"], "properties": { "paymentMethod": { "type": "string", "enum": ["cash", "card", "upi"] } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Payment recorded and membership activated" }, "404": { "description": "Pending membership not found" } }
+      }
+    },
     "/courts/availability": {
       "get": {
         "tags": ["Courts"],
@@ -149,7 +242,24 @@
     "/shop/products": {
       "get": { "tags": ["Shop"], "summary": "List public shop products", "responses": { "200": { "description": "Products returned" } } }
     },
+    "/shop/checkout-config": {
+      "get": { "tags": ["Shop"], "summary": "Read the configured checkout provider", "responses": { "200": { "description": "Checkout configuration returned" } } }
+    },
+    "/shop/member-discount": {
+      "get": {
+        "tags": ["Shop"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Read the signed-in member's active shop discount",
+        "responses": { "200": { "description": "Member discount returned" }, "403": { "description": "Member access required" } }
+      }
+    },
     "/shop/orders": {
+      "get": {
+        "tags": ["Shop"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "List shop orders for club staff",
+        "responses": { "200": { "description": "Orders returned" } }
+      },
       "post": {
         "tags": ["Shop"],
         "security": [{ "bearerAuth": [] }],
@@ -160,12 +270,159 @@
         "responses": { "201": { "description": "Order created" }, "409": { "description": "Insufficient stock" } }
       }
     },
+    "/shop/orders/public": {
+      "post": {
+        "tags": ["Shop"],
+        "summary": "Place a pickup order and create Razorpay checkout when configured",
+        "parameters": [
+          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "minLength": 16, "maxLength": 128 } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["customer", "items"],
+                "properties": {
+                  "customer": {
+                    "type": "object",
+                    "required": ["name", "email", "phone"],
+                    "properties": { "name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "phone": { "type": "string" } }
+                  },
+                  "items": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["productId", "quantity"], "properties": { "productId": { "type": "string", "format": "uuid" }, "quantity": { "type": "integer", "minimum": 1 } } } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Pickup order reserved" }, "409": { "description": "Insufficient stock" } }
+      }
+    },
+    "/shop/orders/public/verify-payment": {
+      "post": {
+        "tags": ["Shop"],
+        "summary": "Verify captured Razorpay payment and confirm a public pickup order",
+        "responses": { "200": { "description": "Payment verified and order confirmed" }, "409": { "description": "Payment does not match or is not captured" } }
+      }
+    },
+    "/shop/orders/{orderId}/confirm": {
+      "post": {
+        "tags": ["Shop"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Record club-counter payment for a pending shop order",
+        "parameters": [
+          { "name": "orderId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["paymentMethod"], "properties": { "paymentMethod": { "type": "string", "enum": ["cash", "card", "upi"] } } }
+            }
+          }
+        },
+        "/shop/orders/{orderId}/fulfill": {
+          "post": {
+            "tags": ["Shop"],
+            "security": [{ "bearerAuth": [] }],
+            "summary": "Mark a confirmed shop pickup or delivery as fulfilled",
+            "parameters": [
+              { "name": "orderId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+            ],
+            "responses": { "200": { "description": "Order fulfilled" }, "404": { "description": "Confirmed order not found" } }
+          }
+        },
+        "/shop/orders/{orderId}/cancel": {
+          "post": {
+            "tags": ["Shop"],
+            "security": [{ "bearerAuth": [] }],
+            "summary": "Cancel an open order and restore reserved stock",
+            "parameters": [
+              { "name": "orderId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+            ],
+            "responses": { "200": { "description": "Order cancelled" }, "404": { "description": "Open order not found" } }
+          }
+        },
+        "responses": { "200": { "description": "Payment recorded and order confirmed" }, "404": { "description": "Pending order not found" } }
+      }
+    },
     "/cafeteria/orders": {
       "post": {
         "tags": ["Cafeteria"],
         "security": [{ "bearerAuth": [] }],
-        "summary": "Place a cafeteria or bar order",
+        "summary": "Place an order on a cafeteria guest tab",
+        "parameters": [
+          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
         "responses": { "201": { "description": "Order placed" } }
+      }
+    },
+    "/cafeteria/menu": {
+      "get": { "tags": ["Cafeteria"], "summary": "List available cafeteria items", "responses": { "200": { "description": "Menu returned" } } }
+    },
+    "/cafeteria/tables": {
+      "get": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "List cafeteria tables",
+        "responses": { "200": { "description": "Tables returned" } }
+      }
+    },
+    "/cafeteria/tables/{tableId}/status": {
+      "patch": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Update a table's availability",
+        "parameters": [
+          { "name": "tableId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "200": { "description": "Table status updated" }, "409": { "description": "Table has an open tab" } }
+      }
+    },
+    "/cafeteria/tabs": {
+      "get": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "List open tabs and their balances",
+        "responses": { "200": { "description": "Open tabs returned" } }
+      },
+      "post": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Open a guest tab",
+        "responses": { "201": { "description": "Guest tab created" } }
+      }
+    },
+    "/cafeteria/tabs/{tabId}/settle": {
+      "post": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Record payment and settle a guest tab",
+        "parameters": [
+          { "name": "tabId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Tab settled and receipt recorded" }, "409": { "description": "Split payment does not match the balance" } }
+      }
+    },
+    "/cafeteria/kitchen/queue": {
+      "get": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "List active kitchen tickets",
+        "responses": { "200": { "description": "Kitchen queue returned" } }
+      }
+    },
+    "/cafeteria/orders/{orderId}/status": {
+      "patch": {
+        "tags": ["Cafeteria"],
+        "security": [{ "bearerAuth": [] }],
+        "summary": "Advance a kitchen ticket status",
+        "parameters": [
+          { "name": "orderId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "200": { "description": "Ticket updated" } }
       }
     },
     "/public/clubs/champions": {
@@ -193,6 +450,62 @@
     },
     "/assistant/query": {
       "post": { "tags": ["Assistant"], "security": [{ "bearerAuth": [] }], "summary": "Query the explainable club assistant", "responses": { "200": { "description": "Assistant recommendation returned" } } }
+    },
+    "/assistant/chat": {
+      "post": {
+        "tags": ["Assistant"],
+        "security": [],
+        "summary": "Ask the public Groq-powered PlayPulse assistant",
+        "description": "Conversation messages are sent to Groq. Do not include passwords or payment details. Limited to 20 requests per minute per IP.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["messages"],
+                "properties": {
+                  "messages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "object",
+                      "required": ["role", "content"],
+                      "properties": {
+                        "role": { "type": "string", "enum": ["user", "assistant"] },
+                        "content": { "type": "string", "minLength": 1, "maxLength": 2000 }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assistant reply returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "object",
+                      "properties": { "reply": { "type": "string" } }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid chat messages" },
+          "429": { "description": "Assistant request limit exceeded" },
+          "503": { "description": "Groq is not configured or is temporarily unavailable" }
+        }
+      }
     },
     "/metrics": {
       "get": { "tags": ["Monitoring"], "summary": "Prometheus-compatible application metrics", "responses": { "200": { "description": "Metrics returned" } } }

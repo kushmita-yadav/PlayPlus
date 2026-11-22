@@ -191,14 +191,16 @@ demoSyncRouter.get("/public", async (_req, res, next) => {
       : null;
     const memberResult = session?.role === "member" ? await database().query(
       `SELECT m.id::text AS id, m.full_name AS name, mp.name AS plan,
+              a.email, mr.status AS membership_status,
               to_char(mr.expires_at::date, 'YYYY-MM-DD') AS expiry,
               m.phone, NULL::numeric AS balance
        FROM members m
        JOIN accounts a ON a.id=m.account_id
-       LEFT JOIN membership_records mr ON mr.member_id=m.id AND mr.status='active'
+       LEFT JOIN membership_records mr ON mr.member_id=m.id AND mr.status IN ('active','pending')
        LEFT JOIN membership_plans mp ON mp.id=mr.plan_id
        WHERE lower(a.email)=lower($1)
-       ORDER BY mr.created_at DESC NULLS LAST
+       ORDER BY CASE mr.status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,
+                mr.created_at DESC NULLS LAST
        LIMIT 1`,
       [session.email],
     ) : null;
@@ -209,6 +211,10 @@ demoSyncRouter.get("/public", async (_req, res, next) => {
           plan: memberResult.rows[0].plan ? String(memberResult.rows[0].plan) : null,
           expiry: memberResult.rows[0].expiry ? String(memberResult.rows[0].expiry) : null,
           phone: String(memberResult.rows[0].phone),
+          email: String(memberResult.rows[0].email),
+          membershipStatus: memberResult.rows[0].membership_status
+            ? String(memberResult.rows[0].membership_status)
+            : null,
           balance: stateMember?.balance ?? null,
         }
       : stateMember;
@@ -306,6 +312,7 @@ demoSyncRouter.post("/public/bookings", async (req, res, next) => {
       courtId: z.string().min(1).max(64),
       date: z.string().date(),
       time: z.string().regex(/^\d{2}:\d{2}$/),
+      durationMinutes: z.coerce.number().int().min(30).max(480).multipleOf(30).default(60),
     }).parse(req.body);
     await client.query("BEGIN");
     const current = await client.query(
@@ -324,13 +331,16 @@ demoSyncRouter.post("/public/bookings", async (req, res, next) => {
       throw new ApiError(400, "Booking time must use a valid 30-minute interval", "INVALID_BOOKING_INTERVAL");
     }
     const requestedStart = hour * 60 + minute;
+    if (requestedStart + input.durationMinutes > 24 * 60) {
+      throw new ApiError(400, "A booking cannot continue into the next day", "INVALID_BOOKING_DURATION");
+    }
     const overlap = bookings.some((booking) => {
       if (booking.courtId !== input.courtId || booking.date !== input.date ||
           ["cancelled", "rejected"].includes(booking.status.toLowerCase())) return false;
       const [bookedHour, bookedMinute] = booking.time.split(":").map(Number);
       const bookedStart = bookedHour * 60 + bookedMinute;
       return requestedStart < bookedStart + (booking.durationMinutes ?? 60) &&
-        bookedStart < requestedStart + 60;
+        bookedStart < requestedStart + input.durationMinutes;
     });
     if (overlap) throw new ApiError(409, "Court is already reserved for an overlapping time", "COURT_CONFLICT");
 
@@ -350,8 +360,9 @@ demoSyncRouter.post("/public/bookings", async (req, res, next) => {
       court: court.name,
       date: input.date,
       time: input.time,
+      durationMinutes: input.durationMinutes,
       status: "Confirmed",
-      amount: session?.role === "member" ? 0 : court.price,
+      amount: session?.role === "member" ? 0 : court.price * input.durationMinutes / 60,
     };
     const nextState = {
       ...state,

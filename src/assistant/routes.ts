@@ -1,10 +1,105 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
+import { env } from "../config/env.js";
 import { pool } from "../database/pool.js";
 import { requireAuth } from "../auth/auth.js";
 import { ApiError } from "../middleware/errors.js";
 
 export const assistantRouter = Router();
+
+const chatMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().trim().min(1).max(2000),
+});
+const chatRequestSchema = z.object({
+  messages: z.array(chatMessageSchema).min(1).max(10),
+}).superRefine(({ messages }, context) => {
+  if (messages[messages.length - 1]?.role !== "user") {
+    context.addIssue({ code: "custom", path: ["messages"], message: "The last message must be from the user" });
+  }
+  if (messages.reduce((total, message) => total + message.content.length, 0) > 10_000) {
+    context.addIssue({ code: "custom", path: ["messages"], message: "Conversation is too long" });
+  }
+});
+const groqResponseSchema = z.object({
+  choices: z.array(z.object({
+    message: z.object({ content: z.string().nullable() }),
+  })).min(1),
+});
+const chatRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      success: false,
+      error: { code: "RATE_LIMITED", message: "Too many assistant requests. Please try again shortly." },
+    });
+  },
+});
+const groqSystemPrompt = `You are PlayPulse Assistant for Champions Club, a sports club offering tennis, padel, badminton, cricket, memberships, court bookings, a sports shop, and a cafeteria.
+Help visitors, members, and staff with general questions about sports, club services, booking steps, and how to use the PlayPulse website. Be friendly, concise, and respond in the user's language when practical.
+You cannot access live availability, prices, accounts, orders, membership records, or internal club data unless that information is explicitly provided in the conversation. Never invent current club details; direct users to the relevant page or club staff for confirmation.
+You cannot create or change bookings, payments, accounts, or records. Never request passwords, one-time codes, payment details, or other sensitive information.`;
+
+assistantRouter.post("/assistant/chat", chatRateLimit, async (req, res, next) => {
+  try {
+    const input = chatRequestSchema.parse(req.body);
+    if (!env.GROQ_API_KEY) {
+      throw new ApiError(503, "The Groq assistant is not configured", "ASSISTANT_UNAVAILABLE");
+    }
+
+    let response: Response;
+    try {
+      response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: env.GROQ_MODEL,
+          messages: [
+            { role: "system", content: groqSystemPrompt },
+            ...input.messages,
+          ],
+          max_completion_tokens: 512,
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") {
+        throw new ApiError(504, "The assistant took too long to respond. Please try again.", "ASSISTANT_TIMEOUT");
+      }
+      throw new ApiError(503, "The assistant service is temporarily unavailable", "ASSISTANT_UNAVAILABLE");
+    }
+
+    if (response.status === 429) {
+      throw new ApiError(503, "The assistant is busy. Please try again shortly.", "ASSISTANT_BUSY");
+    }
+    if (!response.ok) {
+      throw new ApiError(502, "The assistant could not complete this request", "ASSISTANT_PROVIDER_ERROR");
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new ApiError(502, "The assistant returned an invalid response", "ASSISTANT_INVALID_RESPONSE");
+    }
+    const parsedResponse = groqResponseSchema.safeParse(payload);
+    const reply = parsedResponse.success ? parsedResponse.data.choices[0].message.content?.trim() : "";
+    if (!reply) {
+      throw new ApiError(502, "The assistant returned an invalid response", "ASSISTANT_INVALID_RESPONSE");
+    }
+
+    res.status(200).json({ success: true, data: { reply } });
+  } catch (error) {
+    next(error);
+  }
+});
 
 function db() {
   if (!pool) throw new ApiError(503, "Database is unavailable", "DATABASE_UNAVAILABLE");

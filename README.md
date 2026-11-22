@@ -150,7 +150,7 @@ PlayPulse addresses these problems through domain-specific APIs for:
 - Explainable decisions
 - Confirmed-action audit history
 
-The assistant is deliberately grounded in real club data and deterministic rules. It does not claim to perform external AI actions or modify records without authorization.
+The operational assistant is grounded in real club data and deterministic rules. General questions are handled separately by a Groq-powered chat assistant; it does not access private club records or modify bookings, payments, or accounts.
 
 ---
 
@@ -253,7 +253,7 @@ src/
 ├── shop/                  Products, stock, and shop orders
 ├── cafeteria/             Menu, tables, tabs, orders, and payments
 ├── operations/            Enquiries, staff, leave, quotes, and finance
-├── assistant/             Deterministic recommendations and matchmaking
+├── assistant/             Groq chat, deterministic recommendations, and matchmaking
 ├── database/              PostgreSQL pool and migration runner
 └── middleware/            Central errors and HTTP handling
 ```
@@ -480,6 +480,11 @@ Use `.env.example` as a template.
 | `PORT` | No | `3000` | HTTP port |
 | `DATABASE_URL` | Yes for database operations | None | PostgreSQL connection string |
 | `JWT_SECRET` | Yes for authentication | None | JWT signing and verification secret |
+| `PAYMENT_PROVIDER` | No | `manual` | `manual` for pay-at-club or `razorpay` for online checkout |
+| `RAZORPAY_KEY_ID` | When Razorpay is enabled | None | Public checkout key ID; safe to return to the browser |
+| `RAZORPAY_KEY_SECRET` | When Razorpay is enabled | None | Server-only order/signature verification secret |
+| `GROQ_API_KEY` | No | None | Server-side Groq API key; required to enable general chat |
+| `GROQ_MODEL` | No | `openai/gpt-oss-20b` | Groq chat-completion model |
 | `DATABASE_SSL` | No | `false` | Enable TLS for PostgreSQL |
 | `DATABASE_SSL_REJECT_UNAUTHORIZED` | No | `true` | Verify the database TLS certificate |
 | `CLUB_TIMEZONE` | No | `Asia/Kolkata` | Club business timezone |
@@ -498,6 +503,8 @@ JWT_SECRET=use-a-long-random-secret-with-at-least-32-characters
 ```
 
 Never commit `.env` or real credentials. The repository `.gitignore` excludes `.env` and local environment files.
+
+To enable Razorpay, set `PAYMENT_PROVIDER=razorpay` and configure both Razorpay credentials in the server environment. The key secret is never returned to the frontend. The server verifies the checkout signature and confirms the payment is captured for the expected amount before confirming shop orders or activating approved memberships. Without Razorpay credentials, keep `PAYMENT_PROVIDER=manual` to use the existing club-counter payment flow.
 
 ---
 
@@ -652,7 +659,15 @@ All versioned application endpoints begin with `/api/v1`.
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api/v1/memberships/plans` | No | List active plans |
+| GET | `/api/v1/memberships/members` | Staff permission | View member directory, approval, and payment status |
+| GET | `/api/v1/memberships/mine` | Member | View own application and approval status |
 | POST | `/api/v1/memberships/plans` | Admin | Create or configure a plan |
+| POST | `/api/v1/auth/register` | No | Register a member and optionally request a plan (requires club approval) |
+| POST | `/api/v1/memberships/:membershipId/approve` | Membership staff | Approve a pending plan application |
+| POST | `/api/v1/memberships/:membershipId/reject` | Membership staff | Reject a pending plan application |
+| POST | `/api/v1/memberships/:membershipId/checkout` | Member | Start Razorpay payment for an approved plan |
+| POST | `/api/v1/memberships/:membershipId/verify-payment` | Member | Verify payment and activate the plan |
+| POST | `/api/v1/memberships/:membershipId/activate` | Front desk or higher | Record in-person payment after approval |
 | POST | `/api/v1/memberships/members` | Front desk or higher | Register a member |
 | POST | `/api/v1/memberships/members/:memberId/renew` | Manager/Admin | Renew or change plan |
 | GET | `/api/v1/memberships/members/:memberId/history` | Staff permission | View membership history |
@@ -676,12 +691,30 @@ All versioned application endpoints begin with `/api/v1`.
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api/v1/shop/products` | No | View catalog |
+| GET | `/api/v1/shop/checkout-config` | No | Read the configured checkout provider |
+| GET | `/api/v1/shop/member-discount` | Member | Read the signed-in member's active shop discount |
+| POST | `/api/v1/shop/orders/public` | No | Place a pickup order; starts Razorpay checkout when configured |
+| POST | `/api/v1/shop/orders/public/verify-payment` | No | Verify captured Razorpay payment and confirm the order |
 | POST | `/api/v1/shop/products` | Admin | Add or configure a product |
 | POST | `/api/v1/shop/products/:productId/stock` | Shop manager | Add or adjust stock |
 | GET | `/api/v1/shop/low-stock` | Shop manager | List low-stock products |
-| POST | `/api/v1/shop/orders` | Shop staff | Create counter or online order |
+| GET | `/api/v1/shop/orders` | Shop staff | View orders and payment status |
+| POST | `/api/v1/shop/orders` | Member or shop staff | Create an order; active member discounts are calculated server-side |
+| POST | `/api/v1/shop/orders/:orderId/confirm` | Shop staff | Record counter payment for a reserved order |
 | POST | `/api/v1/shop/orders/:orderId/fulfill` | Shop staff | Mark pickup/delivery fulfilled |
 | POST | `/api/v1/shop/orders/:orderId/cancel` | Shop staff | Cancel and restore stock |
+
+### Membership approvals and payments
+
+Membership signup creates a pending application. A staff member with `members.write` must approve or reject it before the member can pay. In Razorpay mode, the signed-in member can start checkout after approval; membership activation only occurs after the server verifies the captured payment. In manual mode, staff can record an in-person payment after approval.
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/v1/memberships/mine` | Member | Read the signed-in member's latest application and approval state |
+| POST | `/api/v1/memberships/:membershipId/approve` | Membership staff | Approve a pending application |
+| POST | `/api/v1/memberships/:membershipId/reject` | Membership staff | Reject a pending application |
+| POST | `/api/v1/memberships/:membershipId/checkout` | Member | Create/reuse a Razorpay order for an approved application |
+| POST | `/api/v1/memberships/:membershipId/verify-payment` | Member | Verify payment and activate the membership |
 
 ### Cafeteria and Bar
 
@@ -690,9 +723,12 @@ All versioned application endpoints begin with `/api/v1`.
 | GET | `/api/v1/cafeteria/menu` | No | View menu |
 | POST | `/api/v1/cafeteria/menu` | Bar staff | Add menu item |
 | GET | `/api/v1/cafeteria/tables` | Bar staff | View tables |
+| PATCH | `/api/v1/cafeteria/tables/:tableId/status` | Bar staff | Update table status |
 | POST | `/api/v1/cafeteria/tables` | Bar staff | Add a table |
 | POST | `/api/v1/cafeteria/tabs` | Bar staff | Open a customer tab |
+| GET | `/api/v1/cafeteria/tabs` | Bar staff | View open tabs and balances |
 | POST | `/api/v1/cafeteria/orders` | Bar staff | Place an order |
+| GET | `/api/v1/cafeteria/kitchen/queue` | Bar staff | View active kitchen tickets |
 | PATCH | `/api/v1/cafeteria/orders/:orderId/status` | Bar staff | Update kitchen status |
 | POST | `/api/v1/cafeteria/tabs/:tabId/settle` | Bar staff | Record settlement |
 | GET | `/api/v1/cafeteria/revenue/daily` | Finance staff | Daily bar revenue |
@@ -720,6 +756,7 @@ All versioned application endpoints begin with `/api/v1`.
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
+| POST | `/api/v1/assistant/chat` | No | General visitor/member/staff chat using Groq |
 | POST | `/api/v1/assistant/query` | Yes | Identify intent and retrieve recommendations |
 | POST | `/api/v1/assistant/matchmaking` | Member/Admin | Create matchmaking request |
 | POST | `/api/v1/assistant/balance-teams` | Yes | Generate balanced teams |
@@ -940,6 +977,8 @@ Examples of permissions include:
 - Gold, Silver, and Junior plans are seeded by migration.
 - Junior registration requires a date of birth.
 - The Junior plan is for members under 18.
+- Public plan selections remain pending until club approval and payment.
+- Online membership activation requires a verified captured Razorpay payment; manual activation requires prior approval.
 - A member may have only one active membership record.
 - Renewals replace an active record rather than deleting it.
 - Membership history is preserved.
@@ -949,6 +988,7 @@ Examples of permissions include:
 - Stock cannot go below zero.
 - Purchases update product quantity atomically.
 - Sales deduct stock inside the order transaction.
+- Public pickup orders reserve stock until the order is collected or cancelled.
 - Cancellation restores stock and records a movement.
 - The low-stock endpoint compares quantity with each product threshold.
 - Idempotency keys prevent repeated order/payment operations.
@@ -974,7 +1014,9 @@ Examples of permissions include:
 
 ## Smart Assistant and Matchmaking
 
-The assistant uses a bounded rule engine rather than pretending to be a general AI system.
+PlayPulse provides a public, Groq-powered general chat assistant for visitors, members, and staff. Set `GROQ_API_KEY` in the server environment to enable it. Requests are rate-limited, conversation history is bounded, and chat messages are not saved to the PlayPulse database. Messages are sent to Groq for response generation; users are warned not to submit passwords or payment details.
+
+The existing operational assistant remains a bounded rule engine rather than an AI agent. It provides authenticated, permission-aware club recommendations and does not change records without an authorized action.
 
 Supported intents include:
 
@@ -1004,7 +1046,7 @@ Players are sorted by skill and assigned one at a time to the team with the lowe
 
 The system finds alternative courts that do not contain a confirmed overlapping reservation in the same time window.
 
-All assistant context uses authenticated RBAC rules. A confirmation endpoint records an explicit confirmed action in assistant history.
+Operational assistant endpoints use authenticated RBAC rules. The Groq chat endpoint is public and deliberately receives no account or live club data. A confirmation endpoint records an explicit confirmed operational action in assistant history.
 
 ---
 
@@ -1061,6 +1103,7 @@ The repository includes [render.yaml](render.yaml), which defines:
 - One PostgreSQL database
 - Production environment mode
 - A generated JWT secret
+- A Groq API key configured as a secret environment variable
 - A linked database URL
 - TLS database connections
 - Migrations in the pre-deploy step
@@ -1072,10 +1115,11 @@ Deploy through the Render dashboard:
 2. Create a service using the Blueprint.
 3. Allow Render to create `playpulse-db`.
 4. Confirm the web service and database are in the same region.
-5. Deploy the `main` branch and wait for migrations and `/ready` to pass.
-6. In the service shell, set `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, and
+5. Add your Groq API key when prompted (or set `GROQ_API_KEY` in the service environment).
+6. Deploy the `main` branch and wait for migrations and `/ready` to pass.
+7. In the service shell, set `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, and
    `BOOTSTRAP_ADMIN_NAME`, then run `npm run db:create-admin` exactly once.
-7. Remove the temporary bootstrap password and verify the deployed app sign-in.
+8. Remove the temporary bootstrap password and verify the deployed app sign-in.
 
 Render runs migrations before switching the service to the new deployment:
 
